@@ -1,0 +1,9 @@
+User-agent: *
+Allow: /
+Sitemap: https://lottosinjeon.com/sitemap.xml
+
+User-agent: Googlebot
+Allow: /
+
+User-agent: Yeti
+Allow: /
