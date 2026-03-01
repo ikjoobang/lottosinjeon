@@ -1,0 +1,12 @@
+name = "lottosinjeon-api"
+main = "src/worker.ts"
+compatibility_date = "2024-12-01"
+
+# KV 바인딩
+[[kv_namespaces]]
+binding = "LOTTO_KV"
+id = "2db34b34812f48e1bfee6ef9c16e2f23"
+
+# Cron: 매주 토요일 21:40 KST (12:40 UTC)
+[triggers]
+crons = ["40 12 * * 6"]
