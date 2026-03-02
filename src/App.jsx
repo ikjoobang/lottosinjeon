@@ -185,11 +185,11 @@ const MANSERYUK = (() => {
     // 1940-02-08의 일간지 = 갑오(甲午) = 60간지 인덱스 30
     // 하지만 더 정확한 기준 사용:
     // 2000-01-01 = 갑진(甲辰)일 = 60간지 인덱스 40... 
-    // 표준 기준: 1900-01-07 = 갑자(甲子)일 = 인덱스 0
-    const base = new Date(1900, 0, 7); // 1900-01-07 = 갑자일
+    // 검증: 1980.10.3 = 丁亥(idx23) → 역산 결과 1900-01-07 = 戊午(idx54)
+    const base = new Date(1900, 0, 7);
     const target = new Date(y, m - 1, d);
     const days = Math.floor((target - base) / 86400000);
-    const idx = ((days % 60) + 60) % 60;
+    const idx = ((54 + days) % 60 + 60) % 60;
     return { gan: idx % 10, ji: idx % 12, idx60: idx };
   };
 
@@ -1238,6 +1238,7 @@ const App = () => {
     if (isNaN(y) || isNaN(m) || isNaN(d) || y < 1940 || y > 2050 || m < 1 || m > 12 || d < 1 || d > 31) return;
     const result = MANSERYUK.analyze(y, m, d, h, sajuForm.calendar, sajuForm.gender);
     setSajuResult(result);
+  };
 
   // 채팅 전송
   const sendChat = () => {
@@ -1257,7 +1258,6 @@ const App = () => {
         time: new Date().toLocaleTimeString("ko", { hour: "2-digit", minute: "2-digit" }),
       }]);
     }, 1500 + Math.random()*2000);
-  };
   };
 
   // 운세 "더 궁금한 점" 전송
