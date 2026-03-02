@@ -185,11 +185,12 @@ const MANSERYUK = (() => {
     // 1940-02-08의 일간지 = 갑오(甲午) = 60간지 인덱스 30
     // 하지만 더 정확한 기준 사용:
     // 2000-01-01 = 갑진(甲辰)일 = 60간지 인덱스 40... 
-    // 검증: 1980.10.3 = 丁亥(idx23) → 역산 결과 1900-01-07 = 戊午(idx54)
+    // 공인 검증: 사주링크 2026.3.2 = 乙亥 → 역산 오프셋 = 16
+    // 1900-01-07 = 庚辰(idx16)
     const base = new Date(1900, 0, 7);
     const target = new Date(y, m - 1, d);
     const days = Math.floor((target - base) / 86400000);
-    const idx = ((54 + days) % 60 + 60) % 60;
+    const idx = ((16 + days) % 60 + 60) % 60;
     return { gan: idx % 10, ji: idx % 12, idx60: idx };
   };
 
