@@ -209,6 +209,26 @@ async function handleWinStores(req: Request, env: Env): Promise<Response> {
   return json({ ok: true, count: stores.length, message: `당첨매장 ${stores.length}건 저장` }, req);
 }
 
+// ── 관리자: 회차별 당첨 매장 시딩 ──
+async function handleWinRound(req: Request, env: Env): Promise<Response> {
+  if (!checkAdmin(req, env)) return json({ error: "Unauthorized" }, req, 401);
+  if (!env.LOTTO_KV) return json({ error: "KV not bound" }, req, 500);
+
+  const body = await req.json() as any;
+  const round = body.round;
+  const stores = body.stores || [];
+  if (!round || !stores.length) return json({ error: "round, stores[] 필수" }, req, 400);
+
+  await env.LOTTO_KV.put(`win_round:${round}`, JSON.stringify({
+    round,
+    stores,
+    seededAt: body.seededAt || new Date().toISOString(),
+    source: body.source || "scraper",
+  }), { expirationTtl: 86400 * 365 });
+
+  return json({ ok: true, round, count: stores.length, message: `${round}회 당첨매장 ${stores.length}건 저장` }, req);
+}
+
 // ── 관리자: 상태 확인 ──
 async function handleStatus(env: Env, req: Request): Promise<Response> {
   if (!env.LOTTO_KV) return json({ error: "KV not bound" }, req, 500);
@@ -490,6 +510,7 @@ export default {
             "POST /admin/seed",
             "POST /admin/bulk",
             "POST /admin/win-stores",
+            "POST /admin/win-round",
             "GET /admin/status",
           ],
         }, req);
@@ -520,6 +541,7 @@ export default {
       if (path === "/admin/seed" && req.method === "POST") return handleSeed(req, env);
       if (path === "/admin/bulk" && req.method === "POST") return handleBulkSeed(req, env);
       if (path === "/admin/win-stores" && req.method === "POST") return handleWinStores(req, env);
+      if (path === "/admin/win-round" && req.method === "POST") return handleWinRound(req, env);
       if (path === "/admin/status") return handleStatus(env, req);
 
       return json({ error: "Not Found" }, req, 404);
