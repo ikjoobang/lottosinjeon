@@ -117,6 +117,31 @@ const MANSERYUK = (() => {
     return { year: ly, month: lm, day: ld, leap: isLeap, error: false };
   };
 
+  // ── 음력 → 양력 변환 ──
+  const lunarToSolar = (ly, lm, ld, isLeapMonth = false) => {
+    if (ly < LUNAR_BASE_YEAR || ly >= LUNAR_BASE_YEAR + LUNAR_INFO.length) {
+      return { year: ly, month: lm, day: ld, error: true };
+    }
+    // 기준: 양력 1940-02-08 = 음력 1940-01-01
+    let offset = 0;
+    // 1940년부터 목표 연도까지 일수 합산
+    for (let y = LUNAR_BASE_YEAR; y < ly; y++) offset += lunarYearDays(y);
+    // 목표 연도의 1월부터 목표 월까지 일수 합산
+    const leap = leapMonth(ly);
+    for (let m = 1; m < lm; m++) {
+      offset += lunarMonthDays(ly, m);
+      if (leap === m) offset += leapMonthDays(ly);
+    }
+    // 윤달인 경우 해당 월의 일수도 더함
+    if (isLeapMonth && leap === lm) offset += lunarMonthDays(ly, lm);
+    // 해당 일 더함
+    offset += (ld - 1);
+    // 기준일에 offset 더해서 양력 날짜 구함
+    const baseDate = new Date(1940, 1, 8); // 양력 1940-02-08
+    const result = new Date(baseDate.getTime() + offset * 86400000);
+    return { year: result.getFullYear(), month: result.getMonth() + 1, day: result.getDate(), error: false };
+  };
+
   // ── 절기(節氣) 기반 월 구분 (사주의 월주는 절기 기준) ──
   // 각 절기의 평균 양력 날짜 [월, 일] (±1일 오차 가능)
   const JEOLGI = [
@@ -284,35 +309,40 @@ const MANSERYUK = (() => {
     return TWELVE_NAMES[idx];
   };
 
-  // ── 신살(神殺) ──
+  // ── 신살(神殺) ── v4.4 전면 재작성
+  // 삼합 기반 신살 테이블 (子~亥 인덱스):
+  // 寅午戌(화)→[2,6,10], 巳酉丑(금)→[5,9,1], 申子辰(수)→[8,0,4], 亥卯未(목)→[11,3,7]
   const calcSinsal = (yearJi, dayJi, pillars) => {
     const result = [];
-    // 역마살: 년지/일지 기준 — 寅午戌→申, 巳酉丑→亥, 申子辰→寅, 亥卯未→巳
-    const yeokma = [[8],[11],[2],[5],[8],[11],[2],[5],[8],[11],[2],[5]];
-    const ymTarget = [2,11,8,5,2,11,8,5,2,11,8,5]; // 각 지지별 역마 위치
-    pillars.forEach(p => { if (p.ji === ymTarget[yearJi]) result.push("역마살"); });
-    // 도화살(桃花殺)
-    const dhTarget = [9,2,3,0,9,2,3,0,9,2,3,0];
-    pillars.forEach(p => { if (p.ji === dhTarget[yearJi]) result.push("도화살"); });
-    // 망신살
-    const msTarget = [10,3,4,1,10,3,4,1,10,3,4,1];
-    pillars.forEach(p => { if (p.ji === msTarget[yearJi]) result.push("망신살"); });
-    // 지살
-    const jsTarget = [3,0,1,10,3,0,1,10,3,0,1,10];
-    pillars.forEach(p => { if (p.ji === jsTarget[yearJi]) result.push("지살"); });
-    // 겁살
-    const gsTarget = [5,2,11,8,5,2,11,8,5,2,11,8];
-    pillars.forEach(p => { if (p.ji === gsTarget[dayJi]) result.push("겁살"); });
-    // 천을귀인: 일간 기준
-    const chuneul = [[1,7],[0,5],[11,9],[11,9],[1,7],[0,5],[7,1],[8,2],[5,3],[5,3]]; // 갑~계
     const dayGan = pillars[2].gan;
-    pillars.forEach(p => { if (chuneul[dayGan].includes(p.ji)) result.push("천을귀인"); });
-    // 천복귀인
-    pillars.forEach(p => { if (chuneul[dayGan].includes(p.ji) && p !== pillars[2]) result.push("천복귀인"); });
-    // 금여록
-    const gyr = [5,4,3,2,1,0,11,10,9,8]; // 갑→巳, 을→辰 ...
+    // ── 삼합 기반 신살 (년지+일지 양쪽 체크) ──
+    //                    子  丑  寅  卯  辰  巳  午  未  申  酉  戌  亥
+    const ymTarget =     [2, 11, 8,  5,  2, 11,  8,  5,  2, 11,  8,  5]; // 역마살
+    const msTarget =     [11, 8, 5,  2, 11,  8,  5,  2, 11,  8,  5,  2]; // 망신살
+    const dhTarget =     [9,  6, 3,  0,  9,  6,  3,  0,  9,  6,  3,  0]; // 도화살
+    const jsTarget =     [8,  5, 2, 11,  8,  5,  2, 11,  8,  5,  2, 11]; // 지살
+    const gsTarget =     [5,  2,11,  8,  5,  2, 11,  8,  5,  2, 11,  8]; // 겁살
+    // 년지 기준 + 일지 기준 양쪽 체크 (중복 방지용 Set)
+    const found = new Set();
+    [yearJi, dayJi].forEach(base => {
+      pillars.forEach((p, i) => {
+        if (p.ji === ymTarget[base] && !found.has("역마살")) { result.push("역마살"); found.add("역마살"); }
+        if (p.ji === msTarget[base] && !found.has("망신살")) { result.push("망신살"); found.add("망신살"); }
+        if (p.ji === dhTarget[base] && !found.has("도화살")) { result.push("도화살"); found.add("도화살"); }
+        if (p.ji === jsTarget[base] && !found.has("지살")) { result.push("지살"); found.add("지살"); }
+        if (p.ji === gsTarget[base] && !found.has("겁살")) { result.push("겁살"); found.add("겁살"); }
+      });
+    });
+    // ── 천을귀인: 일간 기준, 모든 주 체크 ──
+    const chuneul = [[1,7],[0,5],[11,9],[11,9],[1,7],[0,5],[7,1],[8,2],[5,3],[5,3]];
+    pillars.forEach((p, i) => { if (chuneul[dayGan].includes(p.ji)) result.push("천을귀인"); });
+    // ── 금여록 ── 甲辰,乙巳,丙未,丁申,戊未,己申,庚戌,辛亥,壬丑,癸寅
+    const gyr = [4,5,7,8,7,8,10,11,1,2];
     pillars.forEach(p => { if (p.ji === gyr[dayGan]) result.push("금여록"); });
-    return [...new Set(result)]; // 중복 제거
+    // ── 천복귀인: 일간 기준, 모든 주 체크 ──
+    const chunbok = [[1,7],[8,2],[11,9],[11,9],[1,7],[8,2],[7,1],[0,5],[5,3],[5,3]];
+    pillars.forEach((p, i) => { if (chunbok[dayGan].includes(p.ji)) result.push("천복귀인"); });
+    return result;
   };
 
   // ── 공망(空亡) ──
@@ -329,15 +359,55 @@ const MANSERYUK = (() => {
     return empty; // 지지 인덱스 2개
   };
 
-  // ── 대운(大運) 계산 ──
-  const calcDaeun = (yearGan, monthPillar, gender, birthYear) => {
-    // 양남음녀 = 순행, 음남양녀 = 역행
+  // ── 대운(大運) 계산 ── v4.4 절기 기반 정확 계산
+  const calcDaeun = (yearGan, monthPillar, gender, birthYear, solarM, solarD) => {
     const isYangYear = yearGan % 2 === 0;
     const isMale = gender === "male";
     const forward = (isYangYear && isMale) || (!isYangYear && !isMale);
-    // 대운 시작 나이 (간단 계산: 절기까지 일수/3)
-    // 실제는 복잡하지만 평균 2~8세 사이로 추정
-    const startAge = forward ? (((monthPillar.gan + monthPillar.ji) % 7) + 2) : (((monthPillar.gan + monthPillar.ji) % 6) + 3);
+    
+    // 절기 기반 대운 시작나이 계산
+    // JEOLGI: 각 절기의 [월,일] — 현재 월의 절기와 다음 절기 사이 일수
+    const jeolgiDates = [
+      [2,4],[3,6],[4,5],[5,6],[6,6],[7,7],[8,7],[9,8],[10,8],[11,7],[12,7],[1,6]
+    ];
+    // 생일이 속한 절기 구간 찾기
+    let prevJeolgi = null, nextJeolgi = null;
+    for (let i = 0; i < 12; i++) {
+      const [cm,cd] = jeolgiDates[i];
+      const [nm,nd] = jeolgiDates[(i+1)%12];
+      // 현재 절기 시작일
+      const cDate = new Date(birthYear, cm-1, cd);
+      // 다음 절기 시작일
+      let nYear = birthYear;
+      if (nm < cm || (nm === cm && nd < cd)) nYear++;
+      const nDate = new Date(nYear, nm-1, nd);
+      const bDate = new Date(birthYear, solarM-1, solarD);
+      if (bDate >= cDate && bDate < nDate) {
+        prevJeolgi = cDate;
+        nextJeolgi = nDate;
+        break;
+      }
+    }
+    // 12월→1월 경계 처리
+    if (!prevJeolgi) {
+      // 12/7 대설 ~ 1/6 소한 구간
+      if (solarM === 12 && solarD >= 7) {
+        prevJeolgi = new Date(birthYear, 11, 7);
+        nextJeolgi = new Date(birthYear+1, 0, 6);
+      } else if (solarM === 1 && solarD < 6) {
+        prevJeolgi = new Date(birthYear-1, 11, 7);
+        nextJeolgi = new Date(birthYear, 0, 6);
+      } else {
+        prevJeolgi = new Date(birthYear, solarM-1, 1);
+        nextJeolgi = new Date(birthYear, solarM, 1);
+      }
+    }
+    const bDate = new Date(birthYear, solarM-1, solarD);
+    const daysToNext = Math.round((nextJeolgi - bDate) / 86400000);
+    const daysToPrev = Math.round((bDate - prevJeolgi) / 86400000);
+    const days = forward ? daysToNext : daysToPrev;
+    const startAge = Math.max(1, Math.round(days / 3));
+    
     const periods = [];
     for (let i = 0; i < 8; i++) {
       const offset = forward ? (i + 1) : -(i + 1);
@@ -350,16 +420,26 @@ const MANSERYUK = (() => {
 
   // ── 전체 사주 분석 실행 (v4 확장) ──
   const analyze = (year, month, day, hour, calendarType, gender, minute) => {
+    // ── 음력인 경우 양력으로 변환 ──
+    let solarY = year, solarM = month, solarD = day;
+    let lunarInfo = null;
+    if (calendarType === "lunar") {
+      const conv = lunarToSolar(year, month, day);
+      if (!conv.error) {
+        solarY = conv.year; solarM = conv.month; solarD = conv.day;
+        lunarInfo = { year, month, day, leap: false };
+      }
+    }
     // 양력→음력 변환 (표시용)
-    const lunar = solarToLunar(year, month, day);
+    const lunar = lunarInfo || solarToLunar(solarY, solarM, solarD);
 
-    // 절기 기준 사주 월
-    const sajuMonth = getSajuMonth(month, day);
+    // 절기 기준 사주 월 (양력 기준)
+    const sajuMonth = getSajuMonth(solarM, solarD);
 
-    // 4주 계산
-    const yearP = calcYearPillar(year, month, day);
+    // 4주 계산 (양력 기준)
+    const yearP = calcYearPillar(solarY, solarM, solarD);
     const monthP = calcMonthPillar(yearP.gan, sajuMonth);
-    const dayP = calcDayPillar(year, month, day);
+    const dayP = calcDayPillar(solarY, solarM, solarD);
     const hourP = calcHourPillar(dayP.gan, hour >= 0 ? hour : 12);
 
     const rawPillars = [yearP, monthP, dayP, hourP];
@@ -372,8 +452,8 @@ const MANSERYUK = (() => {
     const personality = PERSONALITY[dayGan];
 
     // 띠
-    let adjYear = year;
-    if (month < 2 || (month === 2 && day < 4)) adjYear -= 1;
+    let adjYear = solarY;
+    if (solarM < 2 || (solarM === 2 && solarD < 4)) adjYear -= 1;
     const ddiIdx = (adjYear - 4) % 12;
 
     // 음양
@@ -400,11 +480,11 @@ const MANSERYUK = (() => {
 
     // 공망 (일주 기준, 년주 기준)
     const gongmangDay = calcGongmang(dayP.idx60 || 0);
-    const yearIdx60 = ((yearP.gan % 10) * 6 + (yearP.ji % 12)) % 60; // 근사값
+    const yearIdx60 = ((6 * yearP.gan - 5 * yearP.ji) % 60 + 60) % 60; // CRT 공식
     const gongmangYear = calcGongmang(yearIdx60);
 
     // 대운
-    const daeun = calcDaeun(yearP.gan, monthP, gender, year);
+    const daeun = calcDaeun(yearP.gan, monthP, gender, year, solarM, solarD);
 
     return {
       pillars: rawPillars.map((p, i) => ({
@@ -430,7 +510,7 @@ const MANSERYUK = (() => {
     };
   };
 
-  return { analyze, OH, OH_H, OH_C, GAN, GAN_H, JI, JI_H, GAN_OH, JI_OH, GAN_YY, solarToLunar };
+  return { analyze, OH, OH_H, OH_C, GAN, GAN_H, JI, JI_H, GAN_OH, JI_OH, GAN_YY, solarToLunar, lunarToSolar };
 })();
 // [v3.2b → v3.2c 변경]
 // 🎨 Theme: 보라/인디고 → Claude Color (White #F5F1EC / Orange #D97757 / Black #111)
