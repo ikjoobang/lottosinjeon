@@ -318,6 +318,74 @@ async function handleStores(req: Request, env: Env): Promise<Response> {
 }
 
 // ── Cron: 매주 토요일 추첨 후 자동 수집 시도 ──
+// ── 자동 수집 (프론트엔드 → Workers, 인증 불필요) ──
+// 사용자 브라우저가 DHL API 호출 → 결과를 이 엔드포인트로 전송
+// Workers IP 차단 우회 핵심 로직
+async function handleAutoCollect(req: Request, env: Env): Promise<Response> {
+  if (!env.LOTTO_KV) return json({ error: "KV not bound" }, req, 500);
+
+  const body = await req.json() as any;
+  const { round, numbers, bonus, date, prize1, winners1, totalSales } = body;
+
+  // ── 검증 1: 필수 필드 ──
+  if (!round || !Array.isArray(numbers) || numbers.length !== 6 || !bonus) {
+    return json({ error: "invalid_data" }, req, 400);
+  }
+
+  // ── 검증 2: 번호 범위 (1~45) ──
+  const allNums = [...numbers, bonus];
+  if (allNums.some((n: number) => n < 1 || n > 45 || !Number.isInteger(n))) {
+    return json({ error: "invalid_numbers" }, req, 400);
+  }
+
+  // ── 검증 3: 중복 번호 체크 ──
+  if (new Set(numbers).size !== 6) {
+    return json({ error: "duplicate_numbers" }, req, 400);
+  }
+
+  // ── 검증 4: 회차 범위 (현재 회차 ±1만 허용) ──
+  const currentRound = calcCurrentRound();
+  if (round < currentRound - 1 || round > currentRound + 1) {
+    return json({ error: "round_out_of_range", expected: currentRound }, req, 400);
+  }
+
+  // ── 검증 5: 이미 캐시된 데이터가 있으면 덮어쓰지 않음 ──
+  const existing = await env.LOTTO_KV.get(`round:${round}`);
+  if (existing) {
+    return json({ ok: true, round, status: "already_cached", message: "이미 수집됨" }, req);
+  }
+
+  // ── 저장 ──
+  const data = {
+    round,
+    numbers,
+    bonus,
+    date: date || "",
+    prize1: prize1 || 0,
+    winners1: winners1 || 0,
+    totalSales: totalSales || 0,
+    source: "auto_collect",
+    seededAt: new Date().toISOString(),
+  };
+
+  await env.LOTTO_KV.put(`round:${round}`, JSON.stringify(data), { expirationTtl: 86400 * 365 });
+  return json({ ok: true, round, status: "seeded", message: `${round}회 자동 수집 완료` }, req);
+}
+
+// ── 미수집 회차 확인 (프론트엔드용) ──
+async function handleNeedSync(env: Env, req: Request): Promise<Response> {
+  if (!env.LOTTO_KV) return json({ need: false }, req);
+  
+  const currentRound = calcCurrentRound();
+  const cached = await env.LOTTO_KV.get(`round:${currentRound}`);
+  
+  return json({
+    need: !cached,
+    round: currentRound,
+    cached: !!cached,
+  }, req);
+}
+
 async function handleCron(env: Env) {
   const currentRound = calcCurrentRound();
 
@@ -332,7 +400,7 @@ async function handleCron(env: Env) {
   if (data) {
     await env.LOTTO_KV.put(`round:${currentRound}`, JSON.stringify(data), { expirationTtl: 86400 * 365 });
   }
-  // 실패해도 OK — GitHub Actions가 백업
+  // 실패 시 → 프론트엔드 자동 수집이 백업
 }
 
 // ── 라우터 ──
@@ -350,13 +418,15 @@ export default {
       return json({
         status: "ok",
         service: "로또신전 API",
-        version: "3.0.0",
+        version: "3.1.0",
         currentRound: calcCurrentRound(),
         kvBound: !!env.LOTTO_KV,
         endpoints: [
           "GET /latest",
           "GET /round/:num",
           "GET /stores?lat=Y&lng=X&radius=2000",
+          "GET /need-sync",
+          "POST /auto-collect",
           "POST /admin/seed",
           "POST /admin/bulk",
           "POST /admin/win-stores",
@@ -381,6 +451,10 @@ export default {
 
     // 매장 검색
     if (path === "/stores") return handleStores(req, env);
+
+    // 자동 수집 (프론트엔드 → Workers)
+    if (path === "/auto-collect" && req.method === "POST") return handleAutoCollect(req, env);
+    if (path === "/need-sync") return handleNeedSync(env, req);
 
     // 관리자 API
     if (path === "/admin/seed" && req.method === "POST") return handleSeed(req, env);
