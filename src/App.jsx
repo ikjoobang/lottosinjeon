@@ -991,23 +991,27 @@ const App = () => {
           const res = await fetch(`${LOTTO_API.proxy}/stores?lat=${loc.lat}&lng=${loc.lng}&radius=2000`);
           if (!res.ok) throw new Error("API error");
           const data = await res.json();
-          if (data.success && data.stores) {
+          if (data.stores && data.stores.length > 0) {
             const stores = data.stores.map(s => ({
               name: s.name,
-              region: s.address,
+              region: s.addr,
+              addr: s.addr,
               lat: s.lat,
               lng: s.lng,
               wins: s.wins || 0,
               auto: s.auto || 0,
               manual: s.manual || 0,
+              semi: s.semi || 0,
               straight: s.distance,
               walking: Math.round(s.distance * 1.35),
-              walkMin: Math.round((s.distance * 1.35) / 80),
-              status: "판매점",
-              isWinner: s.isWinner,
-              phone: s.phone,
-              placeUrl: s.placeUrl,
-              distanceText: s.distanceText,
+              walkMin: s.walkMin || Math.round((s.distance * 1.35) / 80),
+              status: s.isWinStore ? "명당" : "판매점",
+              isWinStore: s.isWinStore,
+              tel: s.tel,
+              kakaoUrl: s.kakaoUrl,
+              kakaoId: s.kakaoId,
+              recent: s.recent || [],
+              tip: s.tip || "",
             }));
             setNearStores(stores);
           } else {
@@ -1206,7 +1210,7 @@ const App = () => {
                   <div style={{ display: "flex", gap: 8, marginTop: 3 }}>
                     <span style={{ fontSize: 10, color: "#D97757" }}>📏 {s.straight >= 1000 ? (s.straight/1000).toFixed(1)+"km" : s.straight+"m"}</span>
                     <span style={{ fontSize: 10, color: "#888" }}>🚶 도보 {s.walkMin}분</span>
-                    {s.phone && <span style={{ fontSize: 10, color: "#555" }}>📞 {s.phone}</span>}
+                    {s.tel && <span style={{ fontSize: 10, color: "#555" }}>📞 {s.tel}</span>}
                   </div>
                 </div>
                 {/* 상세보기 화살표 */}
@@ -2055,7 +2059,7 @@ const App = () => {
             {/* 액션 버튼 */}
             <div style={{ display: "flex", gap: 8 }}>
               <button onClick={() => {
-                const url = storeDetail.naverId ? `https://m.place.naver.com/${storeDetail.naverId}` : storeDetail.placeUrl || `https://map.kakao.com/link/map/${encodeURIComponent(storeDetail.name)},${storeDetail.lat},${storeDetail.lng}`;
+                const url = storeDetail.naverId ? `https://m.place.naver.com/${storeDetail.naverId}` : storeDetail.kakaoUrl || storeDetail.placeUrl || `https://map.kakao.com/link/map/${encodeURIComponent(storeDetail.name)},${storeDetail.lat},${storeDetail.lng}`;
                 window.open(url, "_blank");
               }} style={{ flex: 1, padding: "14px 0", borderRadius: 12, border: "none", background: "#22c55e", color: "#fff", fontSize: 14, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
                 📍 매장 상세
