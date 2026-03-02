@@ -174,8 +174,8 @@ const MANSERYUK = (() => {
     // 월지: 인월(1)=인(2), 묘월(2)=묘(3), ... 축월(12)=축(1)
     const jiIdx = (sajuMonth + 1) % 12; // 인=2
     // 월간: 년간×2 + 월 조정
-    // 공식: (년간%5)*2 + 사주월(0-based)
-    const ganIdx = ((yearGan % 5) * 2 + sajuMonth) % 10;
+    // 공식: (년간%5)*2 + 사주월 + 1 (오프셋 보정)
+    const ganIdx = ((yearGan % 5) * 2 + sajuMonth + 1) % 10;
     return { gan: ganIdx, ji: jiIdx };
   };
 
