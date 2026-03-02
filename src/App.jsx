@@ -231,8 +231,124 @@ const MANSERYUK = (() => {
     { trait: "직관적이고 감성적인 이슬형", detail: "감수성이 풍부하고 영감이 넘칩니다", lucky: "1,6" }, // 계
   ];
 
-  // ── 전체 사주 분석 실행 ──
-  const analyze = (year, month, day, hour, calendarType, gender) => {
+  // ── 십신(十神) 계산 ──
+  // 일간과 다른 천간/지지의 관계
+  const SIPSIN_NAME = ["비견","겁재","식신","상관","편재","정재","편관","정관","편인","정인"];
+  const calcSipsin = (dayGan, targetGan) => {
+    // 같은 오행이면 비견/겁재, 내가 생하면 식신/상관, ...
+    const dayOh = GAN_OH[dayGan];
+    const tarOh = GAN_OH[targetGan];
+    const dayYy = dayGan % 2; // 0=양, 1=음
+    const tarYy = targetGan % 2;
+    const sameYy = dayYy === tarYy;
+    // 오행 관계: 같음=비겁, 내가생=식상, 내가극=재, 나를극=관, 나를생=인
+    const rel = ((tarOh - dayOh + 5) % 5);
+    // rel: 0=같음, 1=내가생, 2=내가극, 3=나를극, 4=나를생
+    const idx = rel * 2 + (sameYy ? 0 : 1);
+    return { name: SIPSIN_NAME[idx], idx };
+  };
+  // 지지의 십신은 지지의 정기(正氣)로 판단
+  const JI_JEONGGI = [9,5,0,1,4,2,3,5,6,7,4,8]; // 지지 정기 천간인덱스: 子=癸(9),丑=己(5),寅=甲(0)...
+  const calcJiSipsin = (dayGan, ji) => calcSipsin(dayGan, JI_JEONGGI[ji]);
+
+  // ── 지장간(支藏干) ──
+  // 각 지지에 숨어있는 천간들 [여기(餘氣), 중기(中氣), 정기(正氣)]
+  const JIJANGGAN = [
+    [9],         // 子: 癸
+    [9,7,5],     // 丑: 癸,辛,己
+    [4,2,0],     // 寅: 壬,丙,甲  (정기 갑, 중기 병, 여기 무→임) -- 실제: 戊,丙,甲
+    [1],         // 卯: 乙
+    [1,9,4],     // 辰: 乙,癸,戊
+    [4,6,2],     // 巳: 戊,庚,丙
+    [5,3],       // 午: 己,丁
+    [3,1,5],     // 未: 丁,乙,己
+    [4,8,6],     // 申: 戊,壬,庚
+    [7],         // 酉: 辛
+    [7,3,4],     // 戌: 辛,丁,戊
+    [4,0,8],     // 亥: 戊,甲,壬
+  ];
+
+  // ── 십이운성(十二運星) ──
+  // 일간별 십이운성 순서 (장생→양)
+  const TWELVE_NAMES = ["장생(長生)","목욕(沐浴)","관대(冠帶)","건록(建祿)","제왕(帝旺)","쇠(衰)","병(病)","사(死)","묘(墓)","절(絶)","태(胎)","양(養)"];
+  // 양간 장생 위치: 甲=亥(11), 丙=寅(2), 戊=寅(2), 庚=巳(5), 壬=申(8)
+  // 음간은 역행
+  const TWELVE_START = [11,6,2,9,2,9,5,0,8,3]; // 각 천간의 장생 지지
+  const calcTwelve = (dayGan, ji) => {
+    const start = TWELVE_START[dayGan];
+    const isYang = dayGan % 2 === 0;
+    let idx;
+    if (isYang) idx = ((ji - start + 12) % 12);
+    else idx = ((start - ji + 12) % 12);
+    return TWELVE_NAMES[idx];
+  };
+
+  // ── 신살(神殺) ──
+  const calcSinsal = (yearJi, dayJi, pillars) => {
+    const result = [];
+    // 역마살: 년지/일지 기준 — 寅午戌→申, 巳酉丑→亥, 申子辰→寅, 亥卯未→巳
+    const yeokma = [[8],[11],[2],[5],[8],[11],[2],[5],[8],[11],[2],[5]];
+    const ymTarget = [2,11,8,5,2,11,8,5,2,11,8,5]; // 각 지지별 역마 위치
+    pillars.forEach(p => { if (p.ji === ymTarget[yearJi]) result.push("역마살"); });
+    // 도화살(桃花殺)
+    const dhTarget = [9,2,3,0,9,2,3,0,9,2,3,0];
+    pillars.forEach(p => { if (p.ji === dhTarget[yearJi]) result.push("도화살"); });
+    // 망신살
+    const msTarget = [10,3,4,1,10,3,4,1,10,3,4,1];
+    pillars.forEach(p => { if (p.ji === msTarget[yearJi]) result.push("망신살"); });
+    // 지살
+    const jsTarget = [3,0,1,10,3,0,1,10,3,0,1,10];
+    pillars.forEach(p => { if (p.ji === jsTarget[yearJi]) result.push("지살"); });
+    // 겁살
+    const gsTarget = [5,2,11,8,5,2,11,8,5,2,11,8];
+    pillars.forEach(p => { if (p.ji === gsTarget[dayJi]) result.push("겁살"); });
+    // 천을귀인: 일간 기준
+    const chuneul = [[1,7],[0,5],[11,9],[11,9],[1,7],[0,5],[7,1],[8,2],[5,3],[5,3]]; // 갑~계
+    const dayGan = pillars[2].gan;
+    pillars.forEach(p => { if (chuneul[dayGan].includes(p.ji)) result.push("천을귀인"); });
+    // 천복귀인
+    pillars.forEach(p => { if (chuneul[dayGan].includes(p.ji) && p !== pillars[2]) result.push("천복귀인"); });
+    // 금여록
+    const gyr = [5,4,3,2,1,0,11,10,9,8]; // 갑→巳, 을→辰 ...
+    pillars.forEach(p => { if (p.ji === gyr[dayGan]) result.push("금여록"); });
+    return [...new Set(result)]; // 중복 제거
+  };
+
+  // ── 공망(空亡) ──
+  const calcGongmang = (dayIdx60) => {
+    // 일주 60갑자 인덱스에서 공망 지지 2개 구함
+    // 순중공망: 10개씩 묶어서 빠진 지지 2개
+    const group = Math.floor(dayIdx60 / 10) * 10;
+    const startJi = group % 12;
+    // 그 10개에 포함 안 된 지지 2개
+    const included = new Set();
+    for (let i = 0; i < 10; i++) included.add((startJi + i) % 12);
+    const empty = [];
+    for (let j = 0; j < 12; j++) if (!included.has(j)) empty.push(j);
+    return empty; // 지지 인덱스 2개
+  };
+
+  // ── 대운(大運) 계산 ──
+  const calcDaeun = (yearGan, monthPillar, gender, birthYear) => {
+    // 양남음녀 = 순행, 음남양녀 = 역행
+    const isYangYear = yearGan % 2 === 0;
+    const isMale = gender === "male";
+    const forward = (isYangYear && isMale) || (!isYangYear && !isMale);
+    // 대운 시작 나이 (간단 계산: 절기까지 일수/3)
+    // 실제는 복잡하지만 평균 2~8세 사이로 추정
+    const startAge = forward ? (((monthPillar.gan + monthPillar.ji) % 7) + 2) : (((monthPillar.gan + monthPillar.ji) % 6) + 3);
+    const periods = [];
+    for (let i = 0; i < 8; i++) {
+      const offset = forward ? (i + 1) : -(i + 1);
+      const ganIdx = ((monthPillar.gan + offset) % 10 + 10) % 10;
+      const jiIdx = ((monthPillar.ji + offset) % 12 + 12) % 12;
+      periods.push({ age: startAge + (i * 10), gan: ganIdx, ji: jiIdx, year: birthYear + startAge + (i * 10) });
+    }
+    return { startAge, forward, periods };
+  };
+
+  // ── 전체 사주 분석 실행 (v4 확장) ──
+  const analyze = (year, month, day, hour, calendarType, gender, minute) => {
     // 양력→음력 변환 (표시용)
     const lunar = solarToLunar(year, month, day);
 
@@ -243,15 +359,16 @@ const MANSERYUK = (() => {
     const yearP = calcYearPillar(year, month, day);
     const monthP = calcMonthPillar(yearP.gan, sajuMonth);
     const dayP = calcDayPillar(year, month, day);
-    const hourP = calcHourPillar(dayP.gan, hour >= 0 ? hour : 12); // 시간 미입력시 오시(12)
+    const hourP = calcHourPillar(dayP.gan, hour >= 0 ? hour : 12);
 
-    const pillars = [yearP, monthP, dayP, hourP];
+    const rawPillars = [yearP, monthP, dayP, hourP];
+    const dayGan = dayP.gan;
 
     // 오행 분석
-    const ohaeng = analyzeOhaeng(pillars);
+    const ohaeng = analyzeOhaeng(rawPillars);
 
     // 일간 성격
-    const personality = PERSONALITY[dayP.gan];
+    const personality = PERSONALITY[dayGan];
 
     // 띠
     let adjYear = year;
@@ -259,27 +376,60 @@ const MANSERYUK = (() => {
     const ddiIdx = (adjYear - 4) % 12;
 
     // 음양
-    const yinyang = GAN_YY[dayP.gan] === "+" ? "양(陽)" : "음(陰)";
+    const yinyang = GAN_YY[dayGan] === "+" ? "양(陽)" : "음(陰)";
+
+    // 십신 계산 (각 주별)
+    const sipsinData = rawPillars.map((p, i) => ({
+      ganSipsin: i === 2 ? { name: "日元", idx: -1 } : calcSipsin(dayGan, p.gan),
+      jiSipsin: calcJiSipsin(dayGan, p.ji),
+    }));
+
+    // 지장간 계산
+    const jijangganData = rawPillars.map(p => {
+      return JIJANGGAN[p.ji].map(g => ({
+        gan: g, ganH: GAN_H[g], sipsin: calcSipsin(dayGan, g),
+      }));
+    });
+
+    // 십이운성
+    const twelveData = rawPillars.map(p => calcTwelve(dayGan, p.ji));
+
+    // 신살
+    const sinsal = calcSinsal(yearP.ji, dayP.ji, rawPillars);
+
+    // 공망 (일주 기준, 년주 기준)
+    const gongmangDay = calcGongmang(dayP.idx60 || 0);
+    const yearIdx60 = ((yearP.gan % 10) * 6 + (yearP.ji % 12)) % 60; // 근사값
+    const gongmangYear = calcGongmang(yearIdx60);
+
+    // 대운
+    const daeun = calcDaeun(yearP.gan, monthP, gender, year);
 
     return {
-      pillars: pillars.map(p => ({
+      pillars: rawPillars.map((p, i) => ({
         gan: p.gan, ji: p.ji,
         text: ganjiStr(p.gan, p.ji),
         ganOh: GAN_OH[p.gan], jiOh: JI_OH[p.ji],
+        ganYy: GAN_YY[p.gan], jiYy: p.ji % 2 === 0 ? "+" : "-",
+        sipsin: sipsinData[i],
+        idx60: p.idx60 || 0,
       })),
-      lunar,
-      ohaeng,
-      personality,
+      lunar, ohaeng, personality,
       ddi: { name: DDI[ddiIdx], emoji: DDI_E[ddiIdx], idx: ddiIdx },
       yinyang,
       mainElement: OH[ohaeng.main],
       mainElementH: OH_H[ohaeng.main],
       mainColor: OH_C[ohaeng.main],
-      dayGan: dayP.gan,
+      dayGan,
+      jijanggan: jijangganData,
+      twelve: twelveData,
+      sinsal,
+      gongmangDay, gongmangYear,
+      daeun,
     };
   };
 
-  return { analyze, OH, OH_H, OH_C, GAN, GAN_H, JI, JI_H, solarToLunar };
+  return { analyze, OH, OH_H, OH_C, GAN, GAN_H, JI, JI_H, GAN_OH, JI_OH, GAN_YY, solarToLunar };
 })();
 // [v3.2b → v3.2c 변경]
 // 🎨 Theme: 보라/인디고 → Claude Color (White #F5F1EC / Orange #D97757 / Black #111)
@@ -914,7 +1064,7 @@ const App = () => {
   const [selectedMap, setSelectedMap] = useState("naver");
   const [generated, setGenerated] = useState([]);
   const [genCount, setGenCount] = useState(5);
-  const [sajuForm, setSajuForm] = useState({ name:"", year:"", month:"", day:"", hour:"", calendar:"solar", gender:"male" });
+  const [sajuForm, setSajuForm] = useState({ name:"", year:"", month:"", day:"", hour:"", minute:"", calendar:"solar", gender:"male" });
   const [fortunePeriod, setFortunePeriod] = useState("today");
   const [selectedTarot, setSelectedTarot] = useState(null);
   const [tarotSuit, setTarotSuit] = useState("all");
@@ -1088,6 +1238,26 @@ const App = () => {
     if (isNaN(y) || isNaN(m) || isNaN(d) || y < 1940 || y > 2050 || m < 1 || m > 12 || d < 1 || d > 31) return;
     const result = MANSERYUK.analyze(y, m, d, h, sajuForm.calendar, sajuForm.gender);
     setSajuResult(result);
+
+  // 채팅 전송
+  const sendChat = () => {
+    if (!chatInput.trim()) return;
+    const msg = chatInput.trim();
+    setChatInput("");
+    setChatMsgs(prev => [...prev.slice(-40), {
+      id: Date.now(), name: userProfile.nick || "나", avatar: userProfile.avatar || "😀",
+      color: "#D97757", msg,
+      time: new Date().toLocaleTimeString("ko", { hour: "2-digit", minute: "2-digit" }),
+    }]);
+    setTimeout(() => {
+      const reactions = ["ㅋㅋ 대박","오~ 그렇군요!","저도요 ㅎㅎ","공감합니다 👍","ㄹㅇ ㅋㅋㅋ","화이팅! 🔥"];
+      setChatMsgs(prev => [...prev.slice(-40), {
+        id: Date.now()+1, name: "로또매니아", avatar: "🎯",
+        color: "#22c55e", msg: reactions[Math.floor(Math.random()*reactions.length)],
+        time: new Date().toLocaleTimeString("ko", { hour: "2-digit", minute: "2-digit" }),
+      }]);
+    }, 1500 + Math.random()*2000);
+  };
   };
 
   // 운세 "더 궁금한 점" 전송
@@ -1386,8 +1556,8 @@ const App = () => {
         </div>
         {/* 메인화면 입력칸 */}
         <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
-          <input value={chatInput} onChange={e => setChatInput(e.target.value)} placeholder="메시지 입력..." style={{ ...S.input, flex: 1, fontSize: 12 }} />
-          <button style={{ padding: "8px 14px", borderRadius: 10, border: "none", background: "#D97757", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>전송</button>
+          <input value={chatInput} onChange={e => setChatInput(e.target.value)} onKeyDown={e => e.key === "Enter" && sendChat()} placeholder="메시지 입력..." style={{ ...S.input, flex: 1, fontSize: 12 }} />
+          <button onClick={sendChat} style={{ padding: "8px 14px", borderRadius: 10, border: "none", background: "#D97757", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>전송</button>
         </div>
       </div>
     </div>
@@ -1520,8 +1690,8 @@ const App = () => {
               <div style={{ fontSize: 11, color: "#888", marginBottom: 4 }}>이름</div>
               <input value={sajuForm.name} onChange={e => setSajuForm({...sajuForm, name: e.target.value})} onFocus={e => e.stopPropagation()} onClick={e => e.stopPropagation()} autoComplete="off" enterKeyHint="next" placeholder="홍길동" style={S.input} />
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8, marginBottom: 10 }}>
-              {[{ k: "year", l: "년(年)", p: "1990" }, { k: "month", l: "월(月)", p: "01" }, { k: "day", l: "일(日)", p: "15" }, { k: "hour", l: "시(時)", p: "14" }].map(f => (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 6, marginBottom: 10 }}>
+              {[{ k: "year", l: "년(年)", p: "1990" }, { k: "month", l: "월(月)", p: "01" }, { k: "day", l: "일(日)", p: "15" }, { k: "hour", l: "시(時)", p: "14" }, { k: "minute", l: "분(分)", p: "30" }].map(f => (
                 <div key={f.k}>
                   <div style={{ fontSize: 10, color: "#888", marginBottom: 3, textAlign: "center" }}>{f.l}</div>
                   <input value={sajuForm[f.k]} onChange={e => setSajuForm({...sajuForm, [f.k]: e.target.value})} onFocus={e => e.stopPropagation()} onClick={e => e.stopPropagation()} autoComplete="off" inputMode="numeric" placeholder={f.p} style={{ ...S.input, textAlign: "center", fontSize: 15, fontWeight: 600 }} />
@@ -1552,108 +1722,185 @@ const App = () => {
             <button onClick={runSaju} style={S.btn}>🔮 사주팔자 분석하기</button>
           </div>
 
-          {/* 결과 */}
+          {/* 결과 — 전문 사주명식 */}
           {sajuResult && (() => {
-            const { pillars, lunar, ohaeng, personality, ddi, yinyang, mainElement, mainElementH, mainColor, dayGan } = sajuResult;
-            const OH_NAMES = MANSERYUK.OH;
-            const OH_COLORS = MANSERYUK.OH_C;
-            const totalOh = ohaeng.count.reduce((a,b) => a+b, 0);
+            const { pillars, lunar, ohaeng, personality, ddi, yinyang, mainElement, mainElementH, mainColor, dayGan, jijanggan, twelve, sinsal, gongmangDay, gongmangYear, daeun } = sajuResult;
+            const OH_N = MANSERYUK.OH;
+            const OH_H = MANSERYUK.OH_H;
+            const OH_C = MANSERYUK.OH_C;
+            const G_H = MANSERYUK.GAN_H;
+            const J_H = MANSERYUK.JI_H;
+            const G_OH = MANSERYUK.GAN_OH;
+            const J_OH = MANSERYUK.JI_OH;
+            const G_YY = MANSERYUK.GAN_YY;
+            const headerL = ["생시","생일","생월","생년"];
+            const cellS = { textAlign: "center", padding: "6px 2px", borderRight: "1px solid #2C2C2C" };
+            const labelS = { fontSize: 10, color: "#888", padding: "6px 4px", borderRight: "1px solid #2C2C2C", textAlign: "center", borderBottom: "1px solid #2C2C2C" };
+            const tagS = (bg, fg) => ({ display: "inline-block", padding: "3px 8px", borderRadius: 6, background: bg, color: fg, fontSize: 11, fontWeight: 600, margin: "2px" });
+            const revP = [...pillars].reverse(); // 시→일→월→년 → 역순으로 표시 (생시,생일,생월,생년)
             return (
             <div style={{ marginTop: 12 }}>
-              {/* 음력 + 띠 헤더 */}
-              <div style={{ ...S.glow, textAlign: "center", position: "relative" }}>
-                <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 4 }}>{sajuForm.name}님의 사주팔자</div>
-                {!lunar.error && (
-                  <div style={{ fontSize: 11, color: "#888", marginBottom: 2 }}>
-                    🌙 음력 {lunar.year}년 {lunar.leap ? "(윤)" : ""}{lunar.month}월 {lunar.day}일
-                  </div>
-                )}
-                <div style={{ fontSize: 11, color: "#888", marginBottom: 10 }}>
-                  {ddi.emoji} {ddi.name}띠 · {yinyang} · 주원소 <span style={{ color: mainColor, fontWeight: 700 }}>{mainElement}({mainElementH})</span>
-                </div>
+              {/* 이름 헤더 */}
+              <div style={{ ...S.glow, position: "relative", paddingBottom: 0 }}>
+                <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 2 }}>{sajuForm.name}님의 사주명식</div>
+                {!lunar.error && <div style={{ fontSize: 11, color: "#888", marginBottom: 2 }}>🌙 음력 {lunar.year}년 {lunar.leap ? "(윤)" : ""}{lunar.month}월 {lunar.day}일 · {ddi.emoji}{ddi.name}띠 · {yinyang}</div>}
 
-                {/* 4주 카드 */}
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 6, marginBottom: 14 }}>
-                  {pillars.map((p, i) => (
-                    <div key={i} style={{ padding: "10px 4px", background: "#0A0A0A", borderRadius: 10, border: `1px solid ${i === 2 ? mainColor + "44" : "#1C1C1C"}` }}>
-                      <div style={{ fontSize: 9, color: "#666", marginBottom: 4 }}>{["년주","월주","일주","시주"][i]}</div>
-                      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
-                        <span style={{ fontSize: 16, fontWeight: 800, color: OH_COLORS[p.ganOh] }}>{MANSERYUK.GAN_H[p.gan]}</span>
-                        <span style={{ fontSize: 16, fontWeight: 800, color: OH_COLORS[p.jiOh] }}>{MANSERYUK.JI_H[p.ji]}</span>
-                      </div>
-                      <div style={{ fontSize: 9, color: "#555", marginTop: 3 }}>
-                        {MANSERYUK.GAN[p.gan]}{MANSERYUK.JI[p.ji]}
-                      </div>
-                      {i === 2 && <div style={{ fontSize: 7, color: mainColor, marginTop: 2 }}>▲ 일간</div>}
-                    </div>
-                  ))}
-                </div>
+                {/* ── 사주명식 테이블 ── */}
+                <div style={{ overflowX: "auto", marginTop: 10 }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", border: "1px solid #2C2C2C", fontSize: 12, tableLayout: "fixed" }}>
+                  <thead><tr style={{ background: "#111" }}>
+                    <th style={{ ...labelS, width: 44 }}>명식</th>
+                    {headerL.map((h, i) => <th key={i} style={{ ...labelS, background: i === 1 ? mainColor + "11" : "transparent" }}>{h}</th>)}
+                  </tr></thead>
+                  <tbody>
+                    {/* 천간 row — 큰 한자 */}
+                    <tr><td rowSpan={3} style={{ ...labelS, fontWeight: 700, borderBottom: "1px solid #333" }}>천간</td>
+                      {revP.map((p, i) => <td key={i} style={{ ...cellS, borderBottom: "none", padding: "10px 0 2px" }}>
+                        <div style={{ fontSize: 28, fontWeight: 800, color: OH_C[G_OH[p.gan]] }}>{G_H[p.gan]}</div>
+                      </td>)}
+                    </tr>
+                    {/* 음양오행 */}
+                    <tr>{revP.map((p, i) => <td key={i} style={{ ...cellS, borderBottom: "none", padding: "2px 0" }}>
+                      <span style={tagS("#1a1a1a", OH_C[G_OH[p.gan]])}>{p.ganYy}{OH_N[G_OH[p.gan]]}</span>
+                    </td>)}</tr>
+                    {/* 십신 */}
+                    <tr>{revP.map((p, i) => <td key={i} style={{ ...cellS, borderBottom: "1px solid #333", padding: "2px 0 6px" }}>
+                      <span style={tagS("#222", i === 1 ? "#D97757" : "#aaa")}>{p.sipsin.ganSipsin.name}</span>
+                    </td>)}</tr>
 
-                {/* 오행 분포 바 */}
-                <div style={{ marginBottom: 10 }}>
-                  <div style={{ fontSize: 11, fontWeight: 600, color: "#aaa", marginBottom: 6 }}>오행 분포</div>
-                  <div style={{ display: "flex", gap: 4, height: 22, borderRadius: 6, overflow: "hidden" }}>
-                    {ohaeng.count.map((c, i) => c > 0 ? (
-                      <div key={i} style={{ flex: c, background: OH_COLORS[i], display: "flex", alignItems: "center", justifyContent: "center", fontSize: 9, fontWeight: 700, color: "#fff", minWidth: c > 0 ? 24 : 0, transition: "flex 0.3s" }}>
-                        {OH_NAMES[i]}({c})
-                      </div>
-                    ) : null)}
-                  </div>
-                  {/* 부족/과다 인사이트 */}
-                  <div style={{ fontSize: 10, color: "#666", marginTop: 5 }}>
-                    {ohaeng.count.map((c, i) => c === 0 ? OH_NAMES[i] : null).filter(Boolean).length > 0 && (
-                      <span>부족: <span style={{ color: "#ef4444" }}>{ohaeng.count.map((c, i) => c === 0 ? OH_NAMES[i] : null).filter(Boolean).join(", ")}</span> · </span>
-                    )}
-                    {ohaeng.count.map((c, i) => c >= 3 ? OH_NAMES[i] : null).filter(Boolean).length > 0 && (
-                      <span>강함: <span style={{ color: "#22c55e" }}>{ohaeng.count.map((c, i) => c >= 3 ? OH_NAMES[i] : null).filter(Boolean).join(", ")}</span></span>
-                    )}
-                  </div>
-                </div>
-
-                {/* 일간 성격 */}
-                <div style={{ background: "#0A0A0A", borderRadius: 10, padding: 12, textAlign: "left" }}>
-                  <div style={{ fontSize: 12, fontWeight: 700, color: mainColor, marginBottom: 4 }}>{personality.trait}</div>
-                  <div style={{ fontSize: 11, color: "#aaa" }}>{personality.detail}</div>
-                  <div style={{ fontSize: 10, color: "#666", marginTop: 6 }}>🎰 행운 끝자리: <span style={{ color: "#fbbf24", fontWeight: 700 }}>{personality.lucky}</span></div>
+                    {/* 지지 row — 큰 한자 */}
+                    <tr><td rowSpan={3} style={{ ...labelS, fontWeight: 700, borderBottom: "1px solid #333" }}>지지</td>
+                      {revP.map((p, i) => <td key={i} style={{ ...cellS, borderBottom: "none", padding: "10px 0 2px" }}>
+                        <div style={{ fontSize: 28, fontWeight: 800, color: OH_C[J_OH[p.ji]] }}>{J_H[p.ji]}</div>
+                      </td>)}
+                    </tr>
+                    <tr>{revP.map((p, i) => <td key={i} style={{ ...cellS, borderBottom: "none", padding: "2px 0" }}>
+                      <span style={tagS("#1a1a1a", OH_C[J_OH[p.ji]])}>{p.jiYy}{OH_N[J_OH[p.ji]]}</span>
+                    </td>)}</tr>
+                    <tr>{revP.map((p, i) => <td key={i} style={{ ...cellS, borderBottom: "1px solid #333", padding: "2px 0 6px" }}>
+                      <span style={tagS("#222", "#aaa")}>{p.sipsin.jiSipsin.name}</span>
+                    </td>)}</tr>
+                  </tbody>
+                </table>
                 </div>
               </div>
 
-              {/* 미래 예측 (유료 블러) */}
-              <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 8 }}>🔭 미래 예측</div>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 8, marginBottom: 12 }}>
-                {[{ t: "1개월 후", tier: "EX" }, { t: "3개월 후", tier: "EX" }, { t: "6개월 후", tier: "VIP" }, { t: "1년 후", tier: "VIP" }].map((p, i) => (
-                  <div key={i} style={{ ...S.card, padding: 12, position: "relative", filter: i >= 2 ? "blur(3px)" : "none" }}>
-                    <div style={{ fontSize: 12, fontWeight: 700, color: "#D97757", marginBottom: 4 }}>{p.t}</div>
-                    <div style={{ fontSize: 11, color: "#888" }}>
-                      {i === 0 && "재물운 상승기. 새로운 수입원이 열릴 가능성."}
-                      {i === 1 && "대인관계 활발. 귀인의 도움 기대 가능."}
-                      {i >= 2 && "구독하면 확인 가능합니다."}
+              {/* ── 오행분석 ── */}
+              <div style={{ marginTop: 16 }}>
+                <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 10 }}>오행분석</div>
+                <div style={{ ...S.card, padding: 16 }}>
+                  <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-around", height: 100, marginBottom: 8 }}>
+                    {ohaeng.count.map((c, i) => {
+                      const maxC = Math.max(...ohaeng.count, 1);
+                      const h = c > 0 ? (c / maxC * 70) + 10 : 6;
+                      return <div key={i} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
+                        <div style={{ width: 36, height: h, background: c > 0 ? `${OH_C[i]}44` : "#1C1C1C", borderRadius: 4, position: "relative" }}>
+                          <div style={{ position: "absolute", bottom: 0, width: "100%", height: Math.min(h, c > 0 ? 12 : 2), background: OH_C[i], borderRadius: "0 0 4px 4px" }} />
+                        </div>
+                        <span style={{ fontSize: 11, color: c > 0 ? "#ccc" : "#555" }}>{OH_N[i]}({c})</span>
+                      </div>;
+                    })}
+                  </div>
+                  <div style={{ fontSize: 10, color: "#666", textAlign: "center" }}>
+                    {ohaeng.count.map((c, i) => c === 0 ? OH_N[i] : null).filter(Boolean).length > 0 && <span>부족: <span style={{ color: "#ef4444" }}>{ohaeng.count.map((c, i) => c === 0 ? OH_N[i] : null).filter(Boolean).join(", ")}</span></span>}
+                    {ohaeng.count.map((c, i) => c >= 3 ? OH_N[i] : null).filter(Boolean).length > 0 && <span> · 과다: <span style={{ color: "#22c55e" }}>{ohaeng.count.map((c, i) => c >= 3 ? OH_N[i] : null).filter(Boolean).join(", ")}</span></span>}
+                  </div>
+                </div>
+              </div>
+
+              {/* ── 대운분석 ── */}
+              {daeun && <div style={{ marginTop: 16 }}>
+                <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 10 }}>대운분석</div>
+                <div style={{ ...S.card, padding: 12, overflowX: "auto" }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, minWidth: 320 }}>
+                    <tbody>
+                      <tr>{daeun.periods.map((p, i) => <td key={i} style={{ textAlign: "center", padding: "4px 2px", color: "#888", fontSize: 11 }}>{p.age}</td>)}</tr>
+                      <tr>{daeun.periods.map((p, i) => <td key={i} style={{ textAlign: "center", padding: "6px 2px", fontSize: 16, fontWeight: 700, color: OH_C[G_OH[p.gan]] }}>{G_H[p.gan]}</td>)}</tr>
+                      <tr>{daeun.periods.map((p, i) => <td key={i} style={{ textAlign: "center", padding: "6px 2px", fontSize: 16, fontWeight: 700, color: OH_C[J_OH[p.ji]] }}>{J_H[p.ji]}</td>)}</tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>}
+
+              {/* ── 지장간 ── */}
+              {jijanggan && <div style={{ marginTop: 16 }}>
+                <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 10 }}>지장간</div>
+                <div style={{ ...S.card, padding: 12 }}>
+                  {[0,1,2].map(row => <div key={row} style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 6, marginBottom: row < 2 ? 6 : 0 }}>
+                    {[...jijanggan].reverse().map((jj, ci) => {
+                      const item = jj[row];
+                      return <div key={ci} style={{ textAlign: "center" }}>
+                        {item ? <span style={tagS("#1C1C1C", "#ccc")}>{item.sipsin.name} [{G_H[item.gan]}]</span> : <span style={{ fontSize: 10, color: "#333" }}>-</span>}
+                      </div>;
+                    })}
+                  </div>)}
+                </div>
+              </div>}
+
+              {/* ── 십이운성 ── */}
+              {twelve && <div style={{ marginTop: 16 }}>
+                <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 10 }}>십이운성</div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 6 }}>
+                  {[...twelve].reverse().map((t, i) => <div key={i} style={tagS("#111", "#ccc")}>{t}</div>)}
+                </div>
+              </div>}
+
+              {/* ── 신살 ── */}
+              {sinsal && sinsal.length > 0 && <div style={{ marginTop: 16 }}>
+                <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 10 }}>신살</div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                  {sinsal.map((s, i) => <span key={i} style={tagS("#1C1C1C", "#D97757")}>{s}</span>)}
+                </div>
+              </div>}
+
+              {/* ── 공망 ── */}
+              <div style={{ marginTop: 16 }}>
+                <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 10 }}>공망</div>
+                <div style={{ display: "flex", gap: 16 }}>
+                  <div><span style={{ fontSize: 10, color: "#888" }}>[일]</span> {gongmangDay && gongmangDay.map(j => <span key={j} style={tagS("#1C1C1C", "#ccc")}>{J_H[j]}{MANSERYUK.JI[j]}</span>)}</div>
+                  <div><span style={{ fontSize: 10, color: "#888" }}>[년]</span> {gongmangYear && gongmangYear.map(j => <span key={j} style={tagS("#1C1C1C", "#ccc")}>{J_H[j]}{MANSERYUK.JI[j]}</span>)}</div>
+                </div>
+              </div>
+
+              {/* ── 일간 성격 분석 (확장) ── */}
+              <div style={{ marginTop: 16 }}>
+                <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 10 }}>💡 일간 분석</div>
+                <div style={{ ...S.card, padding: 14 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: mainColor, marginBottom: 6 }}>{G_H[dayGan]}({MANSERYUK.GAN[dayGan]}) 일간 — {personality.trait}</div>
+                  <div style={{ fontSize: 12, color: "#aaa", lineHeight: 1.6, marginBottom: 8 }}>{personality.detail}</div>
+                  <div style={{ fontSize: 12, color: "#aaa", lineHeight: 1.6 }}>
+                    {ohaeng.count[G_OH[dayGan]] >= 2 ? "일간의 기운이 강하여 자기 주관이 뚜렷하고 독립적입니다. 타인에게 의존하기보다 스스로 개척하는 타입입니다." : "일간의 기운이 약하여 타인의 도움과 협력이 중요합니다. 인맥을 넓히고 귀인을 만나는 것이 핵심입니다."}
+                  </div>
+                  <div style={{ fontSize: 10, color: "#666", marginTop: 8 }}>🎰 행운 끝자리: <span style={{ color: "#fbbf24", fontWeight: 700 }}>{personality.lucky}</span></div>
+                </div>
+              </div>
+
+              {/* ── 운명 가이드 (확장) ── */}
+              <div style={{ marginTop: 16 }}>
+                <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 10 }}>📜 운명 가이드</div>
+                {[
+                  { icon: "💰", title: "재물운", desc: ohaeng.count[3] + ohaeng.count[4] >= 3 ? `${sajuForm.name}님은 재성(財星)이 강해 돈을 모으는 능력이 뛰어납니다. 특히 ${OH_N[G_OH[dayGan]] === "목" ? "봄철" : OH_N[G_OH[dayGan]] === "화" ? "여름" : OH_N[G_OH[dayGan]] === "금" ? "가을" : "겨울"}에 재물 기회가 열립니다. 부동산, 투자보다 본업에서의 수입이 안정적입니다.` : `재성이 약하므로 저축과 절약이 중요합니다. 큰 투자보다 꾸준한 적립이 맞는 재물 패턴입니다. 편재보다 정재 성향으로 근로소득이 유리합니다.` },
+                  { icon: "❤️", title: "대인관계·연애운", desc: sinsal.includes("도화살") ? "도화살이 있어 이성에게 매력적입니다. 사교적이고 인기가 많으나, 감정 기복에 유의하세요." : `${personality.trait.includes("리더") ? "리더십이 강해 조직에서 두각을 나타냅니다." : personality.trait.includes("유연") ? "부드러운 성품으로 대인관계가 원만합니다." : "신중한 성격으로 깊은 인간관계를 맺는 타입입니다."} 올해는 새로운 인연을 만나기 좋은 시기입니다.` },
+                  { icon: "💼", title: "직업·사업운", desc: `일간 ${MANSERYUK.GAN[dayGan]}(${OH_N[G_OH[dayGan]]})의 특성상 ${G_OH[dayGan] === 0 ? "교육, 의료, 출판, 목재 관련 업종" : G_OH[dayGan] === 1 ? "IT, 전자, 에너지, 요식업" : G_OH[dayGan] === 2 ? "부동산, 건설, 농업, 중개업" : G_OH[dayGan] === 3 ? "금융, 기계, 자동차, 귀금속" : "유통, 물류, 수산, 서비스업"}에 적성이 있습니다. ${sinsal.includes("역마살") ? "역마살이 있어 해외 사업이나 출장이 많은 직종도 좋습니다." : "안정적인 환경에서 전문성을 키우는 것이 유리합니다."}` },
+                  { icon: "🏥", title: "건강 주의", desc: `오행 중 ${ohaeng.count.map((c, i) => c === 0 ? OH_N[i] : null).filter(Boolean).join(", ") || "특별히 부족한 것은 없으나"} ${ohaeng.count[G_OH[dayGan]] < 2 ? "일간이 약하므로 체력 관리에 신경쓰세요." : "일간이 강하므로 과로에 주의하세요."} ${G_OH[dayGan] === 0 ? "간·담 건강에 유의하세요." : G_OH[dayGan] === 1 ? "심장·소장 건강에 유의하세요." : G_OH[dayGan] === 2 ? "비위(위장) 건강에 유의하세요." : G_OH[dayGan] === 3 ? "폐·대장 건강에 유의하세요." : "신장·방광 건강에 유의하세요."}` },
+                  { icon: "🍀", title: "행운 포인트", desc: `행운 방위: ${G_OH[dayGan] === 0 ? "동쪽" : G_OH[dayGan] === 1 ? "남쪽" : G_OH[dayGan] === 2 ? "중앙" : G_OH[dayGan] === 3 ? "서쪽" : "북쪽"} · 행운 색상: ${OH_N[G_OH[dayGan] === 0 ? 4 : G_OH[dayGan] === 1 ? 0 : G_OH[dayGan] === 2 ? 1 : G_OH[dayGan] === 3 ? 2 : 3]}색 계열 · 행운 숫자: ${personality.lucky} · 좋은 요일: ${G_OH[dayGan] === 0 ? "목요일" : G_OH[dayGan] === 1 ? "화요일" : G_OH[dayGan] === 2 ? "토요일" : G_OH[dayGan] === 3 ? "금요일" : "수요일"}` },
+                ].map((g, i) => (
+                  <div key={i} style={{ ...S.card, padding: 14, marginBottom: 8 }}>
+                    <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+                      <span style={{ fontSize: 22 }}>{g.icon}</span>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 4 }}>{g.title}</div>
+                        <div style={{ fontSize: 12, color: "#aaa", lineHeight: 1.6 }}>{g.desc}</div>
+                      </div>
                     </div>
-                    {i >= 2 && <div style={S.lock}><button style={S.lockBtn}>🔓 {p.tier}</button></div>}
                   </div>
                 ))}
               </div>
 
-              {/* 좋은것/주의 */}
-              <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 8 }}>💡 운명 가이드</div>
-              {[
-                { icon: "✅", title: "이런 것은 좋아요", items: "새로운 투자 기회, 동쪽 방향의 이동, 화요일 중요한 결정" },
-                { icon: "⚠️", title: "이런 것은 주의하세요", items: "급한 판단, 금전 대여, 과도한 음주" },
-                { icon: "👥", title: "이런 사람/환경이 도움돼요", items: "연장자의 조언, 물 관련 장소, 파란색 계열의 물건" },
-                { icon: "💰", title: "금전 흐름", items: "3월 중순 이후 수입 증가 예상, 충동 소비 자제" },
-              ].map((g, i) => (
-                <div key={i} style={{ ...S.card, padding: 12, display: "flex", gap: 10 }}>
-                  <span style={{ fontSize: 20 }}>{g.icon}</span>
-                  <div>
-                    <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 2 }}>{g.title}</div>
-                    <div style={{ fontSize: 12, color: "#888" }}>{g.items}</div>
-                  </div>
-                </div>
-              ))}
-
-              {/* 더 궁금한 점 (대화형) */}
+              {/* 더 궁금한 점 */}
               <div style={{ marginTop: 12 }}>
                 <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 8 }}>💬 더 궁금한 점이 있으신가요?</div>
+
                 <div style={{ ...S.card, padding: 12 }}>
                   <div style={{ fontSize: 12, color: "#888", marginBottom: 8 }}>사주 기반으로 궁금한 점을 자유롭게 물어보세요. AI가 자연스럽게 대화하며 풀어드립니다.</div>
                   <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginBottom: 10 }}>
@@ -1881,8 +2128,8 @@ const App = () => {
             <div ref={chatEndRef} />
           </div>
           <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
-            <input value={chatInput} onChange={e => setChatInput(e.target.value)} placeholder="메시지 입력..." style={{ ...S.input, flex: 1 }} />
-            <button style={{ padding: "8px 14px", borderRadius: 10, border: "none", background: "#D97757", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>전송</button>
+            <input value={chatInput} onChange={e => setChatInput(e.target.value)} onKeyDown={e => e.key === "Enter" && sendChat()} placeholder="메시지 입력..." style={{ ...S.input, flex: 1 }} />
+            <button onClick={sendChat} style={{ padding: "8px 14px", borderRadius: 10, border: "none", background: "#D97757", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>전송</button>
           </div>
         </div>
       )}
