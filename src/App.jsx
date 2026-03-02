@@ -965,6 +965,19 @@ const App = () => {
     return () => { document.removeEventListener("focusin", onFocusIn); document.removeEventListener("focusout", onFocusOut); };
   }, []);
 
+  // 🔙 뒤로가기 히스토리 관리 — 앱 꺼짐 방지
+  useEffect(() => {
+    window.history.pushState({ tab: "home" }, "", "/");
+    const onPopState = (e) => {
+      e.preventDefault();
+      if (storeDetail) { setStoreDetail(null); }
+      else if (tab !== "home") { setTab("home"); }
+      window.history.pushState({ tab: "home" }, "", "/");
+    };
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, [tab, storeDetail]);
+
   // 앱 시작 시 최신 회차 당첨번호 조회
   useEffect(() => {
     const loadLotto = async () => {
@@ -1144,7 +1157,7 @@ const App = () => {
 
   // ── 스타일 ──
   const S = {
-    wrap: { maxWidth: 430, margin: "0 auto", minHeight: "100vh", background: "#0A0A0A", color: "#e2e2e8", fontFamily: "'Pretendard Variable', -apple-system, sans-serif", position: "relative", boxSizing: "border-box" },
+    wrap: { maxWidth: 430, margin: "0 auto", minHeight: "100vh", background: "#0A0A0A", color: "#e2e2e8", fontFamily: "'Pretendard Variable', -apple-system, sans-serif", position: "relative", overflowX: "hidden", boxSizing: "border-box" },
     card: { background: "#111111", borderRadius: 12, padding: 14, marginBottom: 10, border: "1px solid #1C1C1C" },
     glow: { background: "linear-gradient(135deg, #1C1612, #141210)", border: "1px solid #3A2A20", borderRadius: 16, padding: 16, marginBottom: 16 },
     btn: { borderRadius: 12, border: "none", background: "linear-gradient(135deg, #D97757, #C4613F)", color: "#fff", fontSize: 15, fontWeight: 700, cursor: "pointer", padding: "14px 0", width: "100%" },
@@ -1293,7 +1306,7 @@ const App = () => {
                     {s.wins > 0 ? (
                       <span style={{ fontSize: 9, padding: "2px 5px", borderRadius: 4, flexShrink: 0, background: s.wins >= 10 ? "#ef444422" : s.wins >= 3 ? "#D9775722" : "#22c55e22", color: s.wins >= 10 ? "#ef4444" : s.wins >= 3 ? "#D97757" : "#22c55e", fontWeight: 700 }}>🏆 {s.wins}회</span>
                     ) : (
-                      <span style={{ fontSize: 9, padding: "2px 5px", borderRadius: 4, background: "#ffffff08", color: "#666", fontWeight: 600 }}>판매점</span>
+                      <span style={{ fontSize: 9, padding: "2px 5px", borderRadius: 4, background: "#ffffff08", color: "#666", fontWeight: 600 }}>📊 당첨정보 수집중</span>
                     )}
                   </div>
                   {/* 주소 */}
@@ -1993,7 +2006,7 @@ const App = () => {
             </div>
           ))}
           {p.tier !== "FREE" && p.tier !== userProfile.plan && (
-            <button onClick={() => { window.open("https://store.steppay.kr/xivix", "_blank"); }} style={{ ...S.btn, marginTop: 10, fontSize: 13, padding: "10px 0", background: p.tier === "VIP" ? `linear-gradient(135deg, ${BRAND.colors.gold}, ${BRAND.colors.darkGold})` : p.color }}>
+            <button onClick={() => { alert("결제 시스템 준비 중입니다.\n곧 오픈 예정이니 조금만 기다려주세요! 🙏"); }} style={{ ...S.btn, marginTop: 10, fontSize: 13, padding: "10px 0", background: p.tier === "VIP" ? `linear-gradient(135deg, ${BRAND.colors.gold}, ${BRAND.colors.darkGold})` : p.color }}>
               {p.tier === "VIP" ? "💎 VIP 결제하기" : "🔓 Exclusive 결제하기"}
             </button>
           )}
@@ -2053,12 +2066,12 @@ const App = () => {
       `}</style>
 
       <div style={{ height: "calc(100vh - 72px)", overflowY: "auto", overflowX: "hidden" }} className="hs">
-        {tab === "home" && <Home />}
-        {tab === "generate" && <Generate />}
-        {tab === "qr" && <QR />}
-        {tab === "fortune" && <Fortune />}
-        {tab === "community" && <Community />}
-        {tab === "my" && <My />}
+        {tab === "home" && Home()}
+        {tab === "generate" && Generate()}
+        {tab === "qr" && QR()}
+        {tab === "fortune" && Fortune()}
+        {tab === "community" && Community()}
+        {tab === "my" && My()}
       </div>
 
       {/* ② 명당 상세 바텀시트 */}
