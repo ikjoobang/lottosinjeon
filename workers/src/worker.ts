@@ -406,63 +406,74 @@ async function handleCron(env: Env) {
 // ── 라우터 ──
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {
-    if (req.method === "OPTIONS") {
-      return new Response(null, { status: 204, headers: corsHeaders(req) });
+    // 🛡️ 글로벌 에러 바운더리 — 어떤 오류든 500 JSON 반환 (서비스 크래시 방지)
+    try {
+      if (req.method === "OPTIONS") {
+        return new Response(null, { status: 204, headers: corsHeaders(req) });
+      }
+
+      const url = new URL(req.url);
+      const path = url.pathname;
+
+      // 헬스체크
+      if (path === "/" || path === "/health") {
+        return json({
+          status: "ok",
+          service: "로또신전 API",
+          version: "3.2.0",
+          currentRound: calcCurrentRound(),
+          kvBound: !!env.LOTTO_KV,
+          resilience: "circuit-breaker + multi-fallback",
+          endpoints: [
+            "GET /latest",
+            "GET /round/:num",
+            "GET /stores?lat=Y&lng=X&radius=2000",
+            "GET /need-sync",
+            "POST /auto-collect",
+            "POST /admin/seed",
+            "POST /admin/bulk",
+            "POST /admin/win-stores",
+            "GET /admin/status",
+          ],
+        }, req);
+      }
+
+      // 최신
+      if (path === "/latest") return getLatest(env, req);
+
+      // 특정 회차 (path param)
+      const roundMatch = path.match(/^\/round\/(\d+)$/);
+      if (roundMatch) return getRound(parseInt(roundMatch[1]), env, req);
+
+      // 특정 회차 (query)
+      if (path === "/round") {
+        const r = parseInt(url.searchParams.get("round") || "0");
+        if (!r) return json({ error: "round 파라미터 필요" }, req, 400);
+        return getRound(r, env, req);
+      }
+
+      // 매장 검색
+      if (path === "/stores") return handleStores(req, env);
+
+      // 자동 수집 (프론트엔드 → Workers)
+      if (path === "/auto-collect" && req.method === "POST") return handleAutoCollect(req, env);
+      if (path === "/need-sync") return handleNeedSync(env, req);
+
+      // 관리자 API
+      if (path === "/admin/seed" && req.method === "POST") return handleSeed(req, env);
+      if (path === "/admin/bulk" && req.method === "POST") return handleBulkSeed(req, env);
+      if (path === "/admin/win-stores" && req.method === "POST") return handleWinStores(req, env);
+      if (path === "/admin/status") return handleStatus(env, req);
+
+      return json({ error: "Not Found" }, req, 404);
+
+    } catch (e: any) {
+      // 🛡️ 어떤 예외든 여기서 잡아서 500 JSON 반환
+      return new Response(
+        JSON.stringify({ error: "Internal Server Error", message: e?.message || "Unknown", version: "3.2.0" }),
+        { status: 500, headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" } }
+      );
     }
-
-    const url = new URL(req.url);
-    const path = url.pathname;
-
-    // 헬스체크
-    if (path === "/" || path === "/health") {
-      return json({
-        status: "ok",
-        service: "로또신전 API",
-        version: "3.1.0",
-        currentRound: calcCurrentRound(),
-        kvBound: !!env.LOTTO_KV,
-        endpoints: [
-          "GET /latest",
-          "GET /round/:num",
-          "GET /stores?lat=Y&lng=X&radius=2000",
-          "GET /need-sync",
-          "POST /auto-collect",
-          "POST /admin/seed",
-          "POST /admin/bulk",
-          "POST /admin/win-stores",
-          "GET /admin/status",
-        ],
-      }, req);
-    }
-
-    // 최신
-    if (path === "/latest") return getLatest(env, req);
-
-    // 특정 회차 (path param)
-    const roundMatch = path.match(/^\/round\/(\d+)$/);
-    if (roundMatch) return getRound(parseInt(roundMatch[1]), env, req);
-
-    // 특정 회차 (query)
-    if (path === "/round") {
-      const r = parseInt(url.searchParams.get("round") || "0");
-      if (!r) return json({ error: "round 파라미터 필요" }, req, 400);
-      return getRound(r, env, req);
-    }
-
-    // 매장 검색
-    if (path === "/stores") return handleStores(req, env);
-
-    // 자동 수집 (프론트엔드 → Workers)
-    if (path === "/auto-collect" && req.method === "POST") return handleAutoCollect(req, env);
-    if (path === "/need-sync") return handleNeedSync(env, req);
-
-    // 관리자 API
-    if (path === "/admin/seed" && req.method === "POST") return handleSeed(req, env);
-    if (path === "/admin/bulk" && req.method === "POST") return handleBulkSeed(req, env);
-    if (path === "/admin/win-stores" && req.method === "POST") return handleWinStores(req, env);
-    if (path === "/admin/status") return handleStatus(env, req);
-
-    return json({ error: "Not Found" }, req, 404);
   },
 
   async scheduled(event: ScheduledEvent, env: Env) {

@@ -407,13 +407,56 @@ const getInsight = (auto, manual, semi) => {
 const AVG_RATIO = { auto: 65.9, manual: 31.3, semi: 2.8 };
 
 // ── v3.5 동행복권 API 연동 ──
-// Workers 프록시: /api/lotto?round=N → 동행복권 JSON 중계 (CORS 우회)
-// 직접 호출 불가 (대기열 시스템), Workers Cron으로 주기적 캐싱 권장
+// ═══════════════════════════════════════════════════════════════
+// 🛡️ RESILIENCE LAYER v1.0 — 장애 자동복구 + 다단계 폴백
+// 오류 발생 시: Primary → Secondary → Cache → Fallback (4단계)
+// ═══════════════════════════════════════════════════════════════
+
 const LOTTO_API = {
-  // Cloudflare Workers 프록시 경로 (api.lottosinjeon.com (전용 Workers))
-  proxy: "https://api.lottosinjeon.com",
-  // 동행복권 직접 (fallback — CORS 차단됨, Workers에서만 사용)
-  direct: "https://www.dhlottery.co.kr/common.do?method=getLottoNumber",
+  primary: "https://api.lottosinjeon.com",          // Workers v3.1 (KV 캐시)
+  secondary: "https://lottosinjeon-api.ikjoobang.workers.dev", // Workers 직접 (custom domain 장애 시)
+  direct: "https://www.dhlottery.co.kr/common.do?method=getLottoNumber", // DHL 직접 (브라우저)
+};
+
+// ── 인메모리 캐시 (세션 동안 유지) ──
+const _cache = { rounds: {}, stores: {}, health: { primary: true, secondary: true, lastCheck: 0 } };
+
+// ── 서킷브레이커: 연속 실패 시 해당 서버 일시 차단 ──
+const _circuit = {
+  primary: { failures: 0, openUntil: 0 },
+  secondary: { failures: 0, openUntil: 0 },
+};
+const CIRCUIT_THRESHOLD = 3;  // 3회 연속 실패 → 서킷 오픈
+const CIRCUIT_COOLDOWN = 30000; // 30초 후 재시도
+
+const isCircuitOpen = (server) => {
+  const c = _circuit[server];
+  if (c.failures >= CIRCUIT_THRESHOLD && Date.now() < c.openUntil) return true;
+  if (Date.now() >= c.openUntil) { c.failures = 0; } // 쿨다운 지나면 리셋
+  return false;
+};
+const recordSuccess = (server) => { _circuit[server].failures = 0; };
+const recordFailure = (server) => {
+  _circuit[server].failures++;
+  if (_circuit[server].failures >= CIRCUIT_THRESHOLD) {
+    _circuit[server].openUntil = Date.now() + CIRCUIT_COOLDOWN;
+    console.warn(`[Resilience] ${server} 서킷 오픈 (${CIRCUIT_COOLDOWN/1000}s 대기)`);
+  }
+};
+
+// ── 안전한 fetch wrapper (타임아웃 + 에러 핸들링) ──
+const safeFetch = async (url, options = {}, timeoutMs = 5000) => {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { ...options, signal: controller.signal });
+    clearTimeout(timer);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return await res.json();
+  } catch (e) {
+    clearTimeout(timer);
+    throw e;
+  }
 };
 
 // 현재 회차 계산: 1회 추첨일(2002-12-07) 기준 주차 계산
@@ -423,66 +466,120 @@ const calcCurrentRound = () => {
   const kst = new Date(now.getTime() + (9 * 60 * 60 * 1000) - (now.getTimezoneOffset() * 60 * 1000));
   const diffDays = Math.floor((kst - start) / (1000 * 60 * 60 * 24));
   const weeks = Math.floor(diffDays / 7);
-  // 토요일 20:35 이전이면 아직 추첨 전 → 이번 회차
-  const day = kst.getDay(); // 0=일, 6=토
+  const day = kst.getDay();
   const hour = kst.getHours();
-  if (day === 6 && hour < 21) return weeks + 1; // 토요일 추첨 전
-  if (day < 6) return weeks + 1; // 평일 = 다음 추첨 대기
-  return weeks + 1; // 일요일 = 이미 추첨됨, 다음 회차 대기
+  if (day === 6 && hour < 21) return weeks + 1;
+  if (day < 6) return weeks + 1;
+  return weeks + 1;
 };
 
-// 동행복권 API에서 당첨번호 조회 (v3.1 — KV우선 + 자동시딩)
+// ═══════════════════════════════════════════════════════════════
+// 🎰 당첨번호 조회 — 4단계 폴백
+// ① Primary Workers → ② Secondary Workers → ③ DHL 직접 + 자동시딩 → ④ 캐시
+// ═══════════════════════════════════════════════════════════════
 const fetchLottoResult = async (round) => {
-  // 1차: Workers v3.1 API (KV 캐시)
-  try {
-    const res = await fetch(`${LOTTO_API.proxy}/round/${round}`, { signal: AbortSignal.timeout(5000) });
-    if (res.ok) {
-      const data = await res.json();
-      if (data.round && data.numbers) {
-        // v3.1 응답 → DHL 호환 포맷 변환
-        return {
-          returnValue: "success",
-          drwNo: data.round,
-          drwtNo1: data.numbers[0], drwtNo2: data.numbers[1], drwtNo3: data.numbers[2],
-          drwtNo4: data.numbers[3], drwtNo5: data.numbers[4], drwtNo6: data.numbers[5],
-          bnusNo: data.bonus,
-          drwNoDate: data.date,
-          firstWinamnt: data.prize1 || 0,
-          firstPrzwnerCo: data.winners1 || 0,
-          totSellamnt: data.totalSales || 0,
-        };
-      }
-    }
-  } catch (e) { /* Workers 미응답 → 다음 시도 */ }
+  // v3.1 응답 → DHL 호환 포맷 변환 헬퍼
+  const toCompat = (d) => ({
+    returnValue: "success", drwNo: d.round,
+    drwtNo1: d.numbers[0], drwtNo2: d.numbers[1], drwtNo3: d.numbers[2],
+    drwtNo4: d.numbers[3], drwtNo5: d.numbers[4], drwtNo6: d.numbers[5],
+    bnusNo: d.bonus, drwNoDate: d.date,
+    firstWinamnt: d.prize1 || 0, firstPrzwnerCo: d.winners1 || 0, totSellamnt: d.totalSales || 0,
+  });
 
-  // 2차: 브라우저에서 DHL 직접 호출 (사용자 IP → 차단 안됨) + 자동 시딩
-  try {
-    const res = await fetch(`${LOTTO_API.direct}&drwNo=${round}`, { signal: AbortSignal.timeout(8000) });
-    if (res.ok) {
-      const data = await res.json();
-      if (data.returnValue === "success") {
-        // ★ 자동 시딩: 사용자 브라우저가 가져온 데이터를 Workers KV에 저장
-        try {
-          fetch(`${LOTTO_API.proxy}/auto-collect`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              round: data.drwNo,
-              numbers: [data.drwtNo1, data.drwtNo2, data.drwtNo3, data.drwtNo4, data.drwtNo5, data.drwtNo6],
-              bonus: data.bnusNo,
-              date: data.drwNoDate,
-              prize1: data.firstWinamnt,
-              winners1: data.firstPrzwnerCo,
-              totalSales: data.totSellamnt,
-            }),
-          }).catch(() => {}); // 시딩 실패해도 무시 (다음 사용자가 시도)
-        } catch (e) { /* fire-and-forget */ }
-        return data;
+  // ── ① Primary Workers ──
+  if (!isCircuitOpen("primary")) {
+    try {
+      const data = await safeFetch(`${LOTTO_API.primary}/round/${round}`, {}, 5000);
+      if (data.round && data.numbers) {
+        recordSuccess("primary");
+        const result = toCompat(data);
+        _cache.rounds[round] = result; // 캐시 저장
+        return result;
       }
+    } catch (e) { recordFailure("primary"); }
+  }
+
+  // ── ② Secondary Workers (custom domain 장애 시) ──
+  if (!isCircuitOpen("secondary")) {
+    try {
+      const data = await safeFetch(`${LOTTO_API.secondary}/round/${round}`, {}, 5000);
+      if (data.round && data.numbers) {
+        recordSuccess("secondary");
+        const result = toCompat(data);
+        _cache.rounds[round] = result;
+        return result;
+      }
+    } catch (e) { recordFailure("secondary"); }
+  }
+
+  // ── ③ DHL 직접 (사용자 브라우저 IP → 차단 안됨) + 자동시딩 ──
+  try {
+    const data = await safeFetch(`${LOTTO_API.direct}&drwNo=${round}`, {}, 8000);
+    if (data.returnValue === "success") {
+      _cache.rounds[round] = data;
+      // 자동시딩 (fire-and-forget)
+      safeFetch(`${LOTTO_API.primary}/auto-collect`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          round: data.drwNo,
+          numbers: [data.drwtNo1, data.drwtNo2, data.drwtNo3, data.drwtNo4, data.drwtNo5, data.drwtNo6],
+          bonus: data.bnusNo, date: data.drwNoDate,
+          prize1: data.firstWinamnt, winners1: data.firstPrzwnerCo, totalSales: data.totSellamnt,
+        }),
+      }, 5000).catch(() => {});
+      return data;
     }
   } catch (e) { /* DHL도 실패 */ }
 
-  return null; // 모든 소스 실패 → UI에서 "조회 중" 표시
+  // ── ④ 인메모리 캐시 (이전 성공 데이터) ──
+  if (_cache.rounds[round]) {
+    console.log(`[Resilience] 캐시 폴백: ${round}회`);
+    return _cache.rounds[round];
+  }
+
+  return null; // 모든 소스 실패
+};
+
+// ═══════════════════════════════════════════════════════════════
+// 🏪 매장 검색 — 3단계 폴백
+// ① Primary → ② Secondary → ③ TOP_STORES 하드코딩 거리계산
+// ═══════════════════════════════════════════════════════════════
+const fetchNearbyStores = async (lat, lng, radius = 2000) => {
+  const cacheKey = `${lat.toFixed(3)}_${lng.toFixed(3)}_${radius}`;
+
+  // ── ① Primary Workers ──
+  if (!isCircuitOpen("primary")) {
+    try {
+      const data = await safeFetch(`${LOTTO_API.primary}/stores?lat=${lat}&lng=${lng}&radius=${radius}`, {}, 6000);
+      if (data.stores && data.stores.length > 0) {
+        recordSuccess("primary");
+        _cache.stores[cacheKey] = data;
+        return { source: "api", data };
+      }
+    } catch (e) { recordFailure("primary"); }
+  }
+
+  // ── ② Secondary Workers ──
+  if (!isCircuitOpen("secondary")) {
+    try {
+      const data = await safeFetch(`${LOTTO_API.secondary}/stores?lat=${lat}&lng=${lng}&radius=${radius}`, {}, 6000);
+      if (data.stores && data.stores.length > 0) {
+        recordSuccess("secondary");
+        _cache.stores[cacheKey] = data;
+        return { source: "api", data };
+      }
+    } catch (e) { recordFailure("secondary"); }
+  }
+
+  // ── ②-b 인메모리 캐시 ──
+  if (_cache.stores[cacheKey]) {
+    return { source: "cache", data: _cache.stores[cacheKey] };
+  }
+
+  // ── ③ TOP_STORES 폴백 (하드코딩) ──
+  return { source: "fallback", data: null };
 };
 // ── 전국 로또명당 TOP 10 (실제 데이터 — 2026년 1월 기준) ──
 // 출처: 동행복권 공식 사이트, 뉴스 보도, 공공데이터포털 크로스체크
@@ -987,39 +1084,27 @@ const App = () => {
       async (pos) => {
         const loc = { lat: pos.coords.latitude, lng: pos.coords.longitude };
         setMyLocation(loc);
-        try {
-          const res = await fetch(`${LOTTO_API.proxy}/stores?lat=${loc.lat}&lng=${loc.lng}&radius=2000`);
-          if (!res.ok) throw new Error("API error");
-          const data = await res.json();
-          if (data.stores && data.stores.length > 0) {
-            const stores = data.stores.map(s => ({
-              name: s.name,
-              region: s.addr,
-              addr: s.addr,
-              lat: s.lat,
-              lng: s.lng,
-              wins: s.wins || 0,
-              auto: s.auto || 0,
-              manual: s.manual || 0,
-              semi: s.semi || 0,
-              straight: s.distance,
-              walking: Math.round(s.distance * 1.35),
-              walkMin: s.walkMin || Math.round((s.distance * 1.35) / 80),
-              status: s.isWinStore ? "명당" : "판매점",
-              isWinStore: s.isWinStore,
-              tel: s.tel,
-              kakaoUrl: s.kakaoUrl,
-              kakaoId: s.kakaoId,
-              recent: s.recent || [],
-              tip: s.tip || "",
-            }));
-            setNearStores(stores);
-          } else {
-            setNearStores([]);
-          }
-          setGpsStatus("done");
-        } catch (e) {
-          // API 실패 시 → TOP_STORES fallback
+
+        // 🛡️ 레질리언스 레이어: Primary → Secondary → Cache → Fallback
+        const { source, data } = await fetchNearbyStores(loc.lat, loc.lng, 2000);
+
+        const mapStore = (s) => ({
+          name: s.name, region: s.addr, addr: s.addr,
+          lat: s.lat, lng: s.lng,
+          wins: s.wins || 0, auto: s.auto || 0, manual: s.manual || 0, semi: s.semi || 0,
+          straight: s.distance,
+          walking: Math.round(s.distance * 1.35),
+          walkMin: s.walkMin || Math.round((s.distance * 1.35) / 80),
+          status: s.isWinStore ? "명당" : "판매점",
+          isWinStore: s.isWinStore,
+          tel: s.tel, kakaoUrl: s.kakaoUrl, kakaoId: s.kakaoId,
+          recent: s.recent || [], tip: s.tip || "",
+        });
+
+        if (source !== "fallback" && data?.stores?.length > 0) {
+          setNearStores(data.stores.map(mapStore));
+        } else {
+          // 최종 폴백: TOP_STORES 하드코딩 + 거리 계산
           const calcDist = (lat1, lng1, lat2, lng2) => {
             const R = 6371000, toRad = d => d * Math.PI / 180;
             const dLat = toRad(lat2 - lat1), dLng = toRad(lng2 - lng1);
@@ -1031,8 +1116,8 @@ const App = () => {
             return { ...s, straight, walking: Math.round(straight * 1.35), walkMin: Math.round((straight * 1.35) / 80), status: "명당" };
           }).sort((a, b) => b.wins - a.wins || a.straight - b.straight);
           setNearStores(stores);
-          setGpsStatus("done");
         }
+        setGpsStatus("done");
       },
       () => setGpsStatus("error"),
       { enableHighAccuracy: true, timeout: 8000 }
