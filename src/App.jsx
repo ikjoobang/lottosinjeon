@@ -1475,9 +1475,9 @@ const App = () => {
                   <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
                     <span style={{ fontSize: 13, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{s.name}</span>
                     {s.wins > 0 ? (
-                      <span style={{ fontSize: 9, padding: "2px 5px", borderRadius: 4, flexShrink: 0, background: s.wins >= 10 ? "#ef444422" : s.wins >= 3 ? "#D9775722" : "#22c55e22", color: s.wins >= 10 ? "#ef4444" : s.wins >= 3 ? "#D97757" : "#22c55e", fontWeight: 700 }}>🏆 {s.wins}회</span>
+                      <span style={{ fontSize: 9, padding: "2px 5px", borderRadius: 4, flexShrink: 0, background: s.wins >= 10 ? "#ef444422" : s.wins >= 3 ? "#D9775722" : "#22c55e22", color: s.wins >= 10 ? "#ef4444" : s.wins >= 3 ? "#D97757" : "#22c55e", fontWeight: 700 }}>🏆 1등 {s.wins}회</span>
                     ) : (
-                      <span style={{ fontSize: 9, padding: "2px 5px", borderRadius: 4, background: "#ffffff08", color: "#666", fontWeight: 600 }}>📊 당첨정보 수집중</span>
+                      <span style={{ fontSize: 9, padding: "2px 5px", borderRadius: 4, background: "#ffffff08", color: "#555", fontWeight: 600 }}>1등 이력 없음</span>
                     )}
                   </div>
                   {/* 주소 */}
