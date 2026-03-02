@@ -248,33 +248,90 @@ async function handleStores(req: Request, env: Env): Promise<Response> {
   const KAKAO_KEY = "44837b4a47833896a1f143f5423a37bf";
 
   try {
-    const kakaoUrl = `https://dapi.kakao.com/v2/local/search/keyword.json?query=복권&y=${lat}&x=${lng}&radius=${radius}&sort=distance&size=15`;
-    const kakaoRes = await fetch(kakaoUrl, {
-      headers: { Authorization: `KakaoAK ${KAKAO_KEY}` },
-    });
-    const kakaoData = await kakaoRes.json() as any;
+    // 🔍 카카오 검색 확장: "복권" + "로또" 2가지 키워드 병합
+    const search = async (q: string) => {
+      const kakaoUrl = `https://dapi.kakao.com/v2/local/search/keyword.json?query=${encodeURIComponent(q)}&y=${lat}&x=${lng}&radius=${radius}&sort=distance&size=15`;
+      const res = await fetch(kakaoUrl, { headers: { Authorization: `KakaoAK ${KAKAO_KEY}` } });
+      const data = await res.json() as any;
+      return data.documents || [];
+    };
 
-    if (!kakaoData.documents) {
-      return json({ stores: [], total: 0, source: "kakao_error" }, req);
-    }
-
-    // KV에서 당첨매장 데이터 로드
-    let winStoresMap: Record<string, any> = {};
-    if (env.LOTTO_KV) {
-      const winData = await env.LOTTO_KV.get("win_stores", "json") as any;
-      if (winData?.stores) {
-        for (const ws of winData.stores) {
-          // 매장명 기반 매칭 (정규화)
-          const key = ws.name.replace(/\s/g, "").toLowerCase();
-          winStoresMap[key] = ws;
-        }
+    const [docs1, docs2] = await Promise.all([search("복권"), search("로또")]);
+    
+    // 중복 제거 (카카오 ID 기준)
+    const seen = new Set<string>();
+    const allDocs: any[] = [];
+    for (const doc of [...docs1, ...docs2]) {
+      if (!seen.has(doc.id)) {
+        seen.add(doc.id);
+        allDocs.push(doc);
       }
     }
 
-    const stores = kakaoData.documents.map((doc: any) => {
+    if (allDocs.length === 0) {
+      return json({ stores: [], total: 0, source: "kakao_empty" }, req);
+    }
+
+    // KV에서 당첨매장 데이터 로드 (2가지 소스)
+    // 매칭 키: "이름|구/시" 조합으로 오매칭 방지
+    let winStoresMap: Record<string, any> = {};
+    
+    const makeKey = (name: string, addr: string) => {
+      const n = name.replace(/\s/g, "").toLowerCase();
+      // 주소에서 구/시/군 추출 (예: "서울 서대문구" → "서대문구")
+      const parts = addr.split(" ");
+      const district = parts.find((p: string) => p.endsWith("구") || p.endsWith("시") || p.endsWith("군")) || "";
+      return `${n}|${district}`;
+    };
+    
+    if (env.LOTTO_KV) {
+      // ① 누적 명당 (win_stores)
+      const winData = await env.LOTTO_KV.get("win_stores", "json") as any;
+      if (winData?.stores) {
+        for (const ws of winData.stores) {
+          const key = makeKey(ws.name, ws.addr || ws.region || "");
+          winStoresMap[key] = ws;
+          // 이름만으로도 별도 저장 (fallback)
+          const nameOnly = ws.name.replace(/\s/g, "").toLowerCase();
+          if (!winStoresMap[`name:${nameOnly}`]) winStoresMap[`name:${nameOnly}`] = ws;
+        }
+      }
+
+      // ② 최근 회차별 당첨매장 (win_round:XXXX) — 최근 5회차
+      const currentRound = calcCurrentRound();
+      for (let r = currentRound; r >= Math.max(currentRound - 5, 1); r--) {
+        try {
+          const roundWin = await env.LOTTO_KV.get(`win_round:${r}`, "json") as any;
+          if (roundWin?.stores) {
+            for (const ws of roundWin.stores) {
+              if (ws.addr === "동행복권") continue;
+              const key = makeKey(ws.name, ws.addr || "");
+              const nameOnly = ws.name.replace(/\s/g, "").toLowerCase();
+              if (!winStoresMap[key]) {
+                const entry = { name: ws.name, addr: ws.addr, wins: 1, auto: ws.type === "자동" ? 1 : 0, manual: ws.type === "수동" ? 1 : 0, semi: ws.type === "반자동" ? 1 : 0, recent: [{ round: r, type: ws.type, prize: ws.prize }] };
+                winStoresMap[key] = entry;
+                if (!winStoresMap[`name:${nameOnly}`]) winStoresMap[`name:${nameOnly}`] = entry;
+              } else {
+                if (!winStoresMap[key].recent) winStoresMap[key].recent = [];
+                const exists = winStoresMap[key].recent.some((x: any) => x.round === r);
+                if (!exists) {
+                  winStoresMap[key].recent.unshift({ round: r, type: ws.type, prize: ws.prize });
+                  winStoresMap[key].wins = (winStoresMap[key].wins || 0) + 1;
+                }
+              }
+            }
+          }
+        } catch (e) { /* skip */ }
+      }
+    }
+
+    const stores = allDocs.map((doc: any) => {
       const storeName = doc.place_name || "";
-      const nameKey = storeName.replace(/\s/g, "").toLowerCase();
-      const winInfo = winStoresMap[nameKey] || null;
+      const docAddr = doc.road_address_name || doc.address_name || "";
+      
+      // 매칭: 이름+지역(구/시) 정확 매칭만 허용 (오매칭 방지)
+      const exactKey = makeKey(storeName, docAddr);
+      const winInfo = winStoresMap[exactKey] || null;
 
       const dist = parseInt(doc.distance || "0");
       return {

@@ -949,11 +949,21 @@ const App = () => {
   const [fortuneQuestion, setFortuneQuestion] = useState("");
   const chatEndRef = useRef(null);
   const msgIndexRef = useRef(0);
+  const inputFocusRef = useRef(false); // 🛡️ input 포커스 추적 — 키보드 보호
 
   // ── v3.5 동행복권 API 연동 상태 ──
   const currentRound = useRef(calcCurrentRound());
   const [lottoResult, setLottoResult] = useState(null); // API 응답 전체
   const [lottoLoading, setLottoLoading] = useState(true);
+
+  // 🛡️ 글로벌 input focus 추적 — 모바일 키보드 보호
+  useEffect(() => {
+    const onFocusIn = (e) => { if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") inputFocusRef.current = true; };
+    const onFocusOut = (e) => { if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") inputFocusRef.current = false; };
+    document.addEventListener("focusin", onFocusIn);
+    document.addEventListener("focusout", onFocusOut);
+    return () => { document.removeEventListener("focusin", onFocusIn); document.removeEventListener("focusout", onFocusOut); };
+  }, []);
 
   // 앱 시작 시 최신 회차 당첨번호 조회
   useEffect(() => {
@@ -991,6 +1001,9 @@ const App = () => {
 
   useEffect(() => {
     const iv = setInterval(() => {
+      // 🛡️ input 포커스 중이면 리렌더링 방지 (모바일 키보드 보호)
+      if (inputFocusRef.current) return;
+
       if (msgIndexRef.current >= shuffledPool.current.length) {
         // v3.5: 재셔플 시에도 {round} 템플릿 치환
         shuffledPool.current = MSG_POOL.map(d => ({
@@ -1012,7 +1025,7 @@ const App = () => {
 
   // ① Fix: 커뮤니티 대화탭에서만 스크롤 (홈에서 페이지 끌려가는 문제 해결)
   useEffect(() => {
-    if (tab === "community" && subTab.community === "chat") {
+    if (tab === "community" && subTab.community === "chat" && !inputFocusRef.current) {
       chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
     }
   }, [chatMsgs, tab, subTab.community]);
@@ -1131,12 +1144,12 @@ const App = () => {
 
   // ── 스타일 ──
   const S = {
-    wrap: { maxWidth: 430, margin: "0 auto", minHeight: "100vh", background: "#0A0A0A", color: "#e2e2e8", fontFamily: "'Pretendard Variable', -apple-system, sans-serif", position: "relative", overflow: "hidden", userSelect: "none", WebkitUserSelect: "none", WebkitTouchCallout: "none", touchAction: "pan-y", boxSizing: "border-box" },
+    wrap: { maxWidth: 430, margin: "0 auto", minHeight: "100vh", background: "#0A0A0A", color: "#e2e2e8", fontFamily: "'Pretendard Variable', -apple-system, sans-serif", position: "relative", boxSizing: "border-box" },
     card: { background: "#111111", borderRadius: 12, padding: 14, marginBottom: 10, border: "1px solid #1C1C1C" },
     glow: { background: "linear-gradient(135deg, #1C1612, #141210)", border: "1px solid #3A2A20", borderRadius: 16, padding: 16, marginBottom: 16 },
     btn: { borderRadius: 12, border: "none", background: "linear-gradient(135deg, #D97757, #C4613F)", color: "#fff", fontSize: 15, fontWeight: 700, cursor: "pointer", padding: "14px 0", width: "100%" },
     btnSm: { borderRadius: 10, border: "1px solid #2C2C2C", background: "#111111", color: "#888", fontSize: 12, cursor: "pointer", padding: "8px 12px" },
-    input: { background: "#111111", border: "1px solid #2C2C2C", borderRadius: 10, padding: "10px 12px", color: "#e2e2e8", fontSize: 13, outline: "none", width: "100%" },
+    input: { background: "#111111", border: "1px solid #2C2C2C", borderRadius: 10, padding: "10px 12px", color: "#e2e2e8", fontSize: 13, outline: "none", width: "100%", userSelect: "text", WebkitUserSelect: "text" },
     tag: (active, clr) => ({ padding: "8px 14px", borderRadius: 10, background: active ? `${clr || "#D97757"}22` : "#111111", border: `1px solid ${active ? (clr || "#D97757") : "#2C2C2C"}`, color: active ? (clr || "#D97757") : "#888", fontSize: 12, fontWeight: 600, cursor: "pointer" }),
     lock: { position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(10,10,15,0.7)", borderRadius: 12 },
     lockBtn: { background: "linear-gradient(135deg, #D97757, #C4613F)", color: "#fff", border: "none", borderRadius: 10, padding: "8px 16px", fontSize: 12, fontWeight: 700, cursor: "pointer" },
@@ -1280,7 +1293,7 @@ const App = () => {
                     {s.wins > 0 ? (
                       <span style={{ fontSize: 9, padding: "2px 5px", borderRadius: 4, flexShrink: 0, background: s.wins >= 10 ? "#ef444422" : s.wins >= 3 ? "#D9775722" : "#22c55e22", color: s.wins >= 10 ? "#ef4444" : s.wins >= 3 ? "#D97757" : "#22c55e", fontWeight: 700 }}>🏆 {s.wins}회</span>
                     ) : (
-                      <span style={{ fontSize: 9, padding: "2px 5px", borderRadius: 4, background: "#ffffff08", color: "#666", fontWeight: 600 }}>일반 판매점</span>
+                      <span style={{ fontSize: 9, padding: "2px 5px", borderRadius: 4, background: "#ffffff08", color: "#666", fontWeight: 600 }}>판매점</span>
                     )}
                   </div>
                   {/* 주소 */}
@@ -2025,7 +2038,7 @@ const App = () => {
   ];
 
   return (
-    <div style={S.wrap} onContextMenu={e => e.preventDefault()}>
+    <div style={S.wrap}>
       <style>{`
         @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/variable/pretendardvariable.css');
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&family=Outfit:wght@600;700;800&display=swap');
@@ -2059,7 +2072,7 @@ const App = () => {
               <span style={{ width: 36, height: 36, borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, fontWeight: 800, background: storeDetail.rank <= 3 ? "linear-gradient(135deg, #D97757, #C4613F)" : "#1C1C1C", color: storeDetail.rank <= 3 ? "#fff" : "#888" }}>{storeDetail.rank}</span>
               <div style={{ flex: 1 }}>
                 <div style={{ fontSize: 17, fontWeight: 700 }}>{storeDetail.name}</div>
-                <div style={{ fontSize: 12, color: "#888" }}>{storeDetail.region} {storeDetail.wins > 0 ? `· 1등 ${storeDetail.wins}회 배출` : "· 일반 판매점"}</div>
+                <div style={{ fontSize: 12, color: "#888" }}>{storeDetail.region} {storeDetail.wins > 0 ? `· 1등 ${storeDetail.wins}회 배출` : ""}</div>
               </div>
               {storeDetail.hot && <span style={{ background: "#ef4444", color: "#fff", fontSize: 10, fontWeight: 700, padding: "3px 8px", borderRadius: 6 }}>HOT</span>}
             </div>
@@ -2122,8 +2135,8 @@ const App = () => {
                 </>
               ) : (
                 <div style={{ textAlign: "center", padding: "12px 0", color: "#666", fontSize: 12 }}>
-                  아직 1등 당첨 이력이 없는 판매점입니다<br/>
-                  <span style={{ fontSize: 10, color: "#555" }}>하지만 행운은 어디서든 찾아올 수 있어요 🍀</span>
+                  당첨 데이터를 수집 중입니다<br/>
+                  <span style={{ fontSize: 10, color: "#555" }}>확인된 당첨 정보가 있으면 자동으로 표시돼요 📊</span>
                 </div>
               )}
             </div>
